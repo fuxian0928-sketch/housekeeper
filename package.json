@@ -1,0 +1,119 @@
+{
+  "name": "housekeeper",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "concurrently -k \"pnpm dev:server\" \"pnpm dev:web\"",
+    "dev:web": "vite",
+    "dev:server": "tsx watch server/index.ts",
+    "build": "tsc -b && vite build",
+    "build:server": "node scripts/clean-server-build.mjs && tsc -p tsconfig.server.json && node scripts/build-self-source.mjs",
+    "build:desktop": "pnpm build && pnpm build:server",
+    "package:win:local": "pnpm build:desktop && electron-builder --win nsis",
+    "package:win": "pnpm package:win:local",
+    "start": "tsx server/index.ts",
+    "check": "tsc -b --pretty false",
+    "test": "tsx --test --test-concurrency=1 server/**/*.test.ts",
+    "desktop": "electron ."
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "cors": "^2.8.5",
+    "exceljs": "^4.4.0",
+    "express": "^5.1.0",
+    "fflate": "^0.8.3",
+    "lucide-react": "^0.468.0",
+    "mammoth": "^1.12.2",
+    "mdast-util-gfm-table": "^2.0.0",
+    "mdast-util-to-markdown": "^2.1.2",
+    "pinyin-pro": "^3.29.4",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "react-markdown": "^10.1.0",
+    "remark-frontmatter": "^5.0.0",
+    "remark-gfm": "^4.0.1",
+    "remark-parse": "^11.0.0",
+    "sqlite-vec": "^0.1.9",
+    "unified": "^11.0.5",
+    "wavefile": "11.0.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.3",
+    "@types/mdast": "^4.0.4",
+    "@types/node": "^24.3.0",
+    "@types/react": "^19.1.10",
+    "@types/react-dom": "^19.1.7",
+    "@vitejs/plugin-react": "^4.7.0",
+    "concurrently": "^9.2.1",
+    "electron": "^38.2.0",
+    "electron-builder": "^26.0.12",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.3"
+  },
+  "build": {
+    "appId": "top.sparkcrate.housekeeper",
+    "productName": "Housekeeper",
+    "electronDist": "node_modules/electron/dist",
+    "asar": true,
+    "asarUnpack": [
+      "build/server/**/*",
+      "node_modules/sqlite-vec*/**/*"
+    ],
+    "directories": {
+      "output": "outputs/Housekeeper-v1.0.0"
+    },
+    "files": [
+      "dist/**/*",
+      "build/server/**/*",
+      "skills/**/*",
+      "electron/**/*",
+      "node_modules/sqlite-vec/**/*",
+      "node_modules/sqlite-vec-windows-x64/**/*",
+      "package.json",
+      "!build/server/**/*.test.js",
+      "!website/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "electron/scripts",
+        "to": "speech-scripts",
+        "filter": [
+          "*.ps1"
+        ]
+      }
+    ],
+    "win": {
+      "icon": "electron/assets/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "Housekeeper-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": false,
+      "include": "electron/installer.nsh",
+      "runAfterFinish": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Housekeeper",
+      "deleteAppDataOnUninstall": false
+    }
+  },
+  "packageManager": "pnpm@11.19.0",
+  "description": "Housekeeper 用户端：本机运行的 AI 秘书",
+  "license": "UNLICENSED",
+  "author": "fuxian0928-sketch",
+  "homepage": "https://github.com/fuxian0928-sketch/housekeeper"
+}

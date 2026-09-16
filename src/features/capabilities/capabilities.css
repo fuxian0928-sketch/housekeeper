@@ -1,0 +1,68 @@
+.settings-page .settings-form.capability-center { padding:28px; display:block; overflow:auto; min-width:0; }
+.capability-center .subpage-nav { margin:20px 0 28px; flex-wrap:wrap; }
+.capability-center h3 { margin:0; font-size:16px; line-height:1.5; }
+.capability-center p { line-height:1.65; }
+.capability-center .cap-toolbar { display:flex; align-items:center; justify-content:space-between; gap:24px; margin-bottom:20px; }
+.cap-toolbar p { margin:6px 0 0; color:var(--rail-muted); max-width:65ch; }
+.capability-center .cap-meta { font-size:12px; font-weight:400; color:var(--rail-muted); margin-left:8px; }
+.capability-center .cap-editor { padding:24px; margin:20px 0; background:var(--paper-soft); border:1px solid var(--line); border-radius:14px; display:flex; flex-direction:column; gap:20px; }
+.capability-center .cap-editor>p { margin:0; }
+.capability-center .cap-form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:20px 24px; align-items:start; }
+.capability-center :is(.cap-editor,.cap-import) label,.capability-center :is(label.cap-policy,label.cap-search) { display:flex; flex-direction:column; gap:8px; margin:0; min-width:0; font-size:14px; font-weight:500; line-height:1.5; }
+.capability-center :is(input:not([type=checkbox]),select,textarea) { display:block; box-sizing:border-box; width:100%; min-width:0; max-width:100%; margin:0; padding:10px 12px; border:1px solid var(--line-strong); border-radius:10px; background:var(--paper); color:var(--ink); font:inherit; font-size:14px; line-height:22px; }
+.capability-center :is(input:not([type=checkbox]),select) { height:44px; }
+.capability-center select { padding-right:28px; text-overflow:ellipsis; }
+.capability-center textarea { resize:vertical; min-height:160px; }
+.capability-center input::placeholder,.capability-center textarea::placeholder { color:var(--rail-muted); opacity:1; }
+.capability-center :is(input,select,textarea,button,summary):focus-visible { outline:2px solid var(--line); outline-offset:3px; }
+.capability-center :is(input,select,textarea):disabled { opacity:.65; cursor:not-allowed; }
+.capability-center input:read-only { background:var(--paper-soft); }
+.capability-center button { min-height:44px; white-space:nowrap; flex-shrink:0; }
+.capability-center .cap-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.capability-center .cap-editor>.cap-actions { padding-top:16px; border-top:1px solid var(--line); }
+.capability-center .cap-import-section,.capability-center .cap-help { margin:16px 0; }
+.capability-center summary { cursor:pointer; color:var(--ink); font-size:14px; line-height:1.6; padding:6px 0; }
+.capability-center .cap-help>p { max-width:75ch; color:var(--rail-muted); font-size:13px; margin:8px 0; }
+.capability-center .cap-import { display:flex; align-items:flex-end; gap:12px; margin:16px 0 24px; }
+.capability-center .cap-import label { flex:1; }
+.capability-center .cap-list { list-style:none; padding:0; margin:12px 0; }
+.capability-center .cap-list>li { display:flex; align-items:center; justify-content:space-between; gap:24px; padding:22px 0; border-bottom:1px solid var(--line); }
+.capability-center .cap-list>li>div:first-child { flex:1; min-width:0; }
+.capability-center .cap-list h3 { overflow-wrap:anywhere; }
+.capability-center .cap-list p { margin:6px 0; overflow-wrap:anywhere; font-size:14px; }
+.capability-center .cap-list small { display:inline-block; color:var(--rail-muted); font-size:12px; line-height:1.6; }
+.capability-center .cap-list .cap-actions { max-width:370px; justify-content:flex-end; }
+.capability-center .cap-tool-list>li { align-items:flex-start; }
+.capability-center .cap-tool-controls { display:flex; align-items:flex-end; gap:12px; flex:none; }
+.capability-center .cap-policy { width:164px; }
+.capability-center .cap-search { width:260px; flex-shrink:0; }
+.capability-center .cap-hint { color:var(--rail-muted); font-size:13px; }
+.capability-center .cap-empty { padding:32px 0; color:var(--rail-muted); }
+.capability-center .cap-error { color:var(--danger); overflow-wrap:anywhere; }
+.capability-center .cap-notice { color:var(--success); font-size:14px; }
+.capability-center .cap-editor .cap-checkbox { flex-direction:row; align-items:flex-start; font-weight:400; }
+.capability-center .cap-checkbox input { width:18px; height:18px; flex:none; margin:2px 0 0; accent-color:#3872DF; }
+.capability-center pre { white-space:pre-wrap; overflow-wrap:anywhere; max-height:400px; overflow:auto; background:var(--paper-soft); border:1px solid var(--line); border-radius:10px; padding:14px; font-size:12px; line-height:1.7; }
+.capability-center .cap-parameters dl { margin:8px 0; }
+.capability-center .cap-parameters dl>div { display:grid; grid-template-columns:minmax(100px,1fr) minmax(0,2fr); gap:12px; padding:10px 0; border-bottom:1px solid var(--line); font-size:13px; }
+.capability-center .cap-parameters dt { overflow-wrap:anywhere; }
+.capability-center .cap-parameters dd { margin:0; overflow-wrap:anywhere; line-height:1.6; }
+.capability-center .cap-parameters dd small { display:block; }
+@media(max-width:1100px) {
+ .capability-center .cap-list>li { flex-wrap:wrap; }
+ .capability-center .cap-list>li>div:first-child { flex-basis:100%; }
+ .capability-center .cap-list .cap-actions { max-width:none; justify-content:flex-start; }
+}
+@media(max-width:720px) {
+ .settings-page .settings-form.capability-center { padding:16px; }
+ .capability-center .cap-form-grid { grid-template-columns:minmax(0,1fr); }
+ .capability-center .cap-toolbar,.capability-center .cap-import { flex-direction:column; align-items:stretch; gap:16px; }
+ .capability-center .cap-search,.capability-center .cap-policy { width:100%; }
+ .capability-center .cap-editor { padding:16px; }
+ .capability-center .cap-tool-controls { width:100%; }
+ .capability-center .cap-policy { flex:1; }
+}
+
+.cap-dependency-list{display:grid;gap:10px;max-height:260px;overflow:auto;padding:12px 4px}.cap-dependency-list .cap-checkbox{overflow-wrap:anywhere}.cap-result{max-height:420px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
+
+.capability-center .cap-dependency-list .cap-checkbox{display:flex;flex-direction:row;align-items:flex-start;gap:8px;font-size:13px}
