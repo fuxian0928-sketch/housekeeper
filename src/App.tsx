@@ -58,7 +58,7 @@ import xiaoEAvatar from './assets/xiao-e-avatar.png';
 import type { AppSettings, ChatAnalysisStep, ChatCitation, ChatMessage, ConversationSummary, DocumentRecord, HomeData, MemoryRecord, MemorySuggestion, Priority, Project, ProjectSuggestion, StoredConversation, Task, TaskBatchSuggestion, TaskStatus, TaskSuggestion } from './types';
 
 type Page = 'tasks' | 'home' | 'projects' | 'knowledge' | 'memory' | 'conversations' | 'trash' | 'settings';
-const CLIENT_VERSION = '1.0.0';
+const CLIENT_VERSION = '2.0.8';
 type ClientRelease = { version: string; filename: string; sha256: string; size: number; publishedAt: string; downloadUrl: string };
 type ClientUpdateResult = { status: 'up-to-date' | 'installing'; release: ClientRelease };
 declare global {

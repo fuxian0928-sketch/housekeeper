@@ -317,7 +317,7 @@ export function DesktopCompanion() {
             cameraFrame,
             reasoningEffort: 'low',
             interactionMode: 'voice',
-            clientVersion: '1.0.0'
+            clientVersion: '2.0.8'
           }, event => {
             controller.signal.throwIfAborted();
             feedback.onEvent(event);

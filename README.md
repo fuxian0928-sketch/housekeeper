@@ -101,7 +101,7 @@ pnpm desktop
 
 仅调试网页：`pnpm dev`，打开终端输出的 Vite 地址。浏览器开发模式下，密钥默认只在当前服务进程内保存；正式 Electron 客户端通过 Windows 安全存储保存模型密钥。
 
-构建安装包：`pnpm package:win`。输出位于 `outputs/Housekeeper-v1.0.0/`；该命令只生成安装包，不会自动上传任何服务器。
+构建安装包：`pnpm package:win`。输出位于 `outputs/Housekeeper-v2.0.8/`；该命令只生成安装包，不会自动上传任何服务器。
 
 ## 首次配置
 
