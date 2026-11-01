@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { database, nowIso } from '../../db.js';
 import { readGitHubDirectory } from '../github/github-reader.js';
+import { bundledSkillContent, bundledSkills } from './bundled-skills.js';
 
 const managedRoot = resolve(process.env.AI_SECRETARY_SKILLS_DIR?.trim() || join(process.cwd(), 'skills', 'managed'));
 const maxSkillInstructionBytes = 40_000;
@@ -92,17 +93,50 @@ async function rollbackSkillRevisionInternal(id:string,revisionId:string){
 }
 
 export function ensureBundledSkills() {
-  const name = 'office-document-reader';
-  const description = '读取并理解 Word DOCX、Excel XLSX、PowerPoint PPTX 文件，将内容导入个人知识库并保留工作表、幻灯片等来源定位。';
-  const target = safeDestination(managedRoot, name);
-  const content = `---\nname: ${name}\ndescription: ${description}\n---\n\n# Office 文档阅读\n\n当用户希望读取、总结、检索或导入 Word、Excel、PowerPoint 文件时使用本技能。\n\n- 用户明确选择文件后，通过知识库的 Office 导入入口读取文件。\n- DOCX 保留标题、段落、列表与表格；XLSX 按工作表输出；PPTX 按幻灯片输出并包含演讲者备注。\n- 只处理用户明确上传的文件，不读取其他本机目录。\n- 原件保存在受控文档目录，解析结果写入知识库并参与检索。\n- 遇到旧版 DOC、XLS、PPT 时，请用户先另存为 DOCX、XLSX、PPTX。\n`;
-  mkdirSync(target, { recursive: true });
-  writeFileSync(join(target, 'SKILL.md'), content, 'utf8');
-  const existing = findSkill(name);
-  const timestamp = nowIso();
-  const manifest = JSON.stringify({ bundled: true, capability: 'office-document-reader', formats: ['docx', 'xlsx', 'pptx'], permissions: ['读取用户明确上传的文件', '写入知识库'] });
-  if (existing) database.prepare(`UPDATE managed_skills SET description=?,source_type='bundled',source_url=NULL,install_path=?,status='installed',risk_level='low',manifest_json=?,updated_at=? WHERE id=?`).run(description, target, manifest, timestamp, existing.id);
-  else database.prepare(`INSERT INTO managed_skills(id,name,description,source_type,source_url,version,install_path,status,enabled,risk_level,manifest_json,created_at,updated_at) VALUES(?,?,?,'bundled',NULL,'1.0.0',?,'installed',1,'low',?,?,?)`).run(randomUUID(), name, description, target, manifest, timestamp, timestamp);
+  const result = { installed: [] as string[], updated: [] as string[], skipped: [] as string[], errors: [] as Array<{ name: string; message: string }> };
+  for (const definition of bundledSkills) {
+    const existing = findSkill(definition.name);
+    // A custom skill with the same name belongs to the user. An explicit removal
+    // or disable also survives upgrades; installation is not permission to reset it.
+    if (existing && (existing.sourceType !== 'bundled' || existing.status !== 'installed')) {
+      result.skipped.push(definition.name); continue;
+    }
+    const target = safeDestination(managedRoot, `.bundled/${definition.name}`);
+    const path = join(target, 'SKILL.md'), content = bundledSkillContent(definition);
+    const manifest = { bundled: true, capability: definition.name, title: definition.title, loading: 'on_demand',
+      requiredTools: definition.requiredTools, optionalTools: definition.optionalTools, permissions: definition.permissions };
+    const manifestJson = JSON.stringify(manifest);
+    try {
+      const prior = existsSync(path) ? readFileSync(path, 'utf8') : null;
+      const changed = !existing || prior !== content || existing.installPath !== target || existing.version !== definition.version
+        || existing.description !== definition.description || JSON.stringify(existing.manifest) !== manifestJson;
+      if (!changed) continue;
+      if (prior !== content) {
+        mkdirSync(target, { recursive: true });
+        const temporary = join(target, `.SKILL-${randomUUID()}.tmp`);
+        try { writeFileSync(temporary, content, 'utf8'); renameSync(temporary, path); }
+        finally { rmSync(temporary, { force: true }); }
+      }
+      const timestamp = nowIso();
+      if (existing) {
+        database.prepare(`UPDATE managed_skills SET description=?,source_url=NULL,version=?,install_path=?,risk_level='low',manifest_json=?,updated_at=? WHERE id=?`)
+          .run(definition.description, definition.version, target, manifestJson, timestamp, existing.id);
+        result.updated.push(definition.name);
+      } else {
+        database.prepare(`INSERT INTO managed_skills(id,name,description,source_type,source_url,version,install_path,status,enabled,risk_level,manifest_json,created_at,updated_at) VALUES(?,?,?,'bundled',NULL,?,?,'installed',1,'low',?,?,?)`)
+          .run(randomUUID(), definition.name, definition.description, definition.version, target, manifestJson, timestamp, timestamp);
+        result.installed.push(definition.name);
+      }
+    } catch (error) {
+      result.errors.push({ name: definition.name, message: error instanceof Error ? error.message : '内置技能初始化失败' });
+    }
+  }
+  return result;
+}
+
+export function recordManagedSkillUse(skill: ManagedSkill, method: 'agent_on_demand', loadedBytes: number) {
+  database.prepare('UPDATE managed_skills SET last_used_at=?,use_count=use_count+1 WHERE id=?').run(nowIso(), skill.id);
+  audit(skill.id, 'use', [], { method, version: skill.version, loadedBytes });
 }
 
 export function listManagedSkills() {
@@ -326,7 +360,9 @@ export async function loadSkillInstructionTree(skill: ManagedSkill) {
 }
 
 export async function resolveManagedSkillInstructions(message: string, complete?: (input: string, options: { instruction: string; maxTokens: number }) => Promise<string>) {
-  const installed = listManagedSkills().filter((skill) => skill.status === 'installed' && skill.enabled);
+  // The native Agent sees bundled short descriptions and calls load_skill itself.
+  // Do not add a second selection-model round for first-party on-demand methods.
+  const installed = listManagedSkills().filter((skill) => skill.status === 'installed' && skill.enabled && skill.manifest.loading !== 'on_demand');
   let ranked: Array<{ skill: ManagedSkill; score: number }> = [];
   if (complete && installed.length) {
     try {

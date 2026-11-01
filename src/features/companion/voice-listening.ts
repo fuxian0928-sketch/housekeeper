@@ -1,11 +1,5 @@
-// Match direct dismissal commands, not mentions such as “我明天离开” or “不要离开”.
-export function isDismissCommand(text: string): boolean {
-  const normalized = text.toLowerCase().replace(/[\s，。！？、,.!?]/g, '');
-  return /^(?:(?:小e|小艺|小易|小伊){1,2})?(?:请|麻烦)?(?:你)?(?:先)?(?:退下|离开|退下去|去休息|休息去|结束对话|停止聊天|不用陪我了)(?:一下|一会儿)?(?:吧|啦|哦|了)?$/.test(normalized);
-}
-
+export { isDismissCommand, IDLE_FAREWELL } from '../../../server/domain/voice-session-commands';
 export const CONVERSATION_IDLE_MS = 5 * 60 * 1000;
-export const IDLE_FAREWELL = '那主人继续忙吧，小e先退下啦，有事主人随时叫我哦';
 
 // Keep short recordings rather than uploading five minutes of silence.
 export async function listenUntilIdle(listen: (signal: AbortSignal) => Promise<string>, signal: AbortSignal, idleMs = CONVERSATION_IDLE_MS): Promise<string | null> {
@@ -36,17 +30,17 @@ export class NoSpeechError extends Error {
 }
 
 // A brief click must not start the end-of-speech timer.
-export function createSpeechGate(startedAt: number) {
+export function createSpeechGate(startedAt: number, wake = false) {
   let candidateSince: number | null = null;
   let lastVoiceAt = startedAt;
   let heardVoice = false;
   return (level: number, now: number) => {
-    if (level > .025) {
+    if (level > (wake ? .015 : .025)) {
       candidateSince ??= now;
-      if (now - candidateSince >= 120) heardVoice = true;
+      if (now - candidateSince >= (wake ? 80 : 120)) heardVoice = true;
       lastVoiceAt = now;
     } else candidateSince = null;
-    return { heardVoice, stop: (heardVoice && now - lastVoiceAt >= 1200) || now - startedAt >= 12000 };
+    return { heardVoice, lastVoiceAt, stop: (heardVoice && now - lastVoiceAt >= (wake ? 450 : 1200)) || now - startedAt >= (wake ? 3500 : 12000) };
   };
 }
 

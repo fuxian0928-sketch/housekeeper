@@ -58,7 +58,7 @@ export interface DocumentRecord {
   modifiedAt: string;
   indexedAt: string;
   content?: string;
-  sourceType?: 'obsidian' | 'server' | 'office';
+  sourceType?: 'obsidian' | 'server' | 'office' | 'upload';
   serverRevision?: number;
   serverEditedAt?: string | null;
   projectIds?: string[];
@@ -142,6 +142,11 @@ export interface ChatCitation {
   document: string;
   path: string;
   excerpt: string;
+  documentId?: string;
+  version?: number;
+  parentId?: string;
+  sourceRevision?: string;
+  locator?: {startLine: number; endLine: number; page?: number; slide?: number; sheet?: string; rowStart?: number; rowEnd?: number; symbol?: string; jsonPath?: string};
 }
 
 export interface MemorySuggestion {
@@ -168,6 +173,9 @@ export interface TaskBatchSuggestion {
 }
 
 export interface ChatMessage {
+  id?: string;
+  runId?: string | null;
+  runStatus?: import('./features/agent/types').RunStatus;
   role: 'user' | 'assistant';
   content: string;
   citations?: ChatCitation[];
@@ -178,6 +186,7 @@ export interface ChatMessage {
   suggestionSaved?: boolean;
   analysisSteps?: ChatAnalysisStep[];
   createdAt?: string;
+  clientKey?: string;
 }
 
 export interface ChatAnalysisStep {
@@ -198,9 +207,12 @@ export interface ConversationSummary {
   preview: string;
   createdAt: string;
   updatedAt: string;
+  lastMessageAt: string;
 }
 
 export interface StoredConversation {
+  channel?:'voice'|'text';
+  businessProjectId?:string|null;
   id: string;
   title: string;
   scope: 'project' | 'memory';
@@ -210,13 +222,25 @@ export interface StoredConversation {
 }
 
 export interface AppSettings {
+  speechExecution?: 'local' | 'cloud';
   provider: 'openai-compatible';
   aiEnabled: boolean;
   model: string;
   visionModel: string;
+  visionApiBaseUrl?:string;
+  hasVisionApiKey?:boolean;
+  visionApiKeySource?:'session'|'device'|'environment'|'fallback'|'none';
+  voiceWebSearchEnabled?:boolean;
   speechRecognitionModel: string;
+  speechRealtimeRecognitionModel?: string;
+  speechRealtimeSynthesisModel?: string;
+  speechRealtimeSynthesisBaseUrl?: string;
+  speechRealtimeVoice?: string;
+
   speechSynthesisModel: string;
   speechServiceBaseUrl: string;
+  speechLegacyRecognitionBaseUrl?: string;
+  speechLegacySynthesisBaseUrl?: string;
   speechVoice: string;
   speechInstruction: string;
   apiBaseUrl: string;
@@ -230,7 +254,8 @@ export interface AppSettings {
   retrievalApiKeySource: 'none' | 'session' | 'device' | 'environment' | 'fallback';
   webSearchPolicy: 'off' | 'ask' | 'auto';
   hasWebSearchApiKey: boolean;
-  webSearchApiKeySource: 'none' | 'session' | 'device' | 'environment';
+  webSearchApiKeySource: 'none' | 'session' | 'device' | 'environment' | 'model';
+  webSearchProvider?:'deepseek'|'tavily'|'none';
   vaultPath: string;
   vaultLastScannedAt: string | null;
   syncEnabled: boolean;

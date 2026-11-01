@@ -1,0 +1,7 @@
+export type RunStatus='queued'|'running'|'waiting_approval'|'waiting_input'|'suspended'|'reconciling'|'completed'|'partial'|'failed'|'cancelled';
+export type RunEvent={id:string;seq:number;type:string;label:string;createdAt:string;detail?:unknown};
+export type RunSource={documentId:string;title:string;path:string;excerpt:string;version?:number;parentId?:string;sourceRevision?:string;locator?:{startLine:number;endLine:number;page?:number;slide?:number;sheet?:string;rowStart?:number;rowEnd?:number;symbol?:string;jsonPath?:string}};
+export type RunInvocation={id:string;toolName:string;mode:'read'|'write';status:string;arguments:Record<string,unknown>;proposalId:string|null;error:string|null;result:unknown;lateResult?:unknown};
+export type RunArtifact={id:string;kind:'markdown'|'document'|'table'|'spreadsheet';title:string;content:string;documentId:string|null;fileId:string|null;createdAt:string;sources:RunSource[]};
+export type RunView={run:{id:string;conversationId:string;goal:string;status:RunStatus;executionMode:'foreground'|'background';answer:string;error:string|null;updatedAt:string};events:RunEvent[];invocations:RunInvocation[];artifacts:RunArtifact[];sources:RunSource[]};
+export const runStatusLabel:Record<RunStatus,string>={queued:'等待处理',running:'正在处理',waiting_approval:'等待确认',waiting_input:'等待补充',suspended:'已暂停',reconciling:'结果待核实',completed:'已完成',partial:'部分完成',failed:'处理未完成',cancelled:'已取消'};

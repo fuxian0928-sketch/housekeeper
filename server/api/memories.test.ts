@@ -1,0 +1,31 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import express from 'express';
+
+test('memory HTTP APIs preserve revisions and expose history and persona without model waits',async context=>{
+  process.env.AI_SECRETARY_DB_PATH=join(mkdtempSync(join(tmpdir(),'xiwei-memory-api-')),'test.db');
+  const {initializeDatabase,database}=await import('../db.js');initializeDatabase();
+  const {registerMemoryRoutes}=await import('./memories.js');
+  const app=express();app.use(express.json());
+  registerMemoryRoutes(app,{embeddingProvider:()=>null,requestSignal:()=>new AbortController().signal,canUseModel:()=>false,complete:async()=>{throw Error('must not invoke a model');}});
+  const server=app.listen(0,'127.0.0.1');await new Promise<void>(resolve=>server.once('listening',resolve));
+  context.after(async()=>{await new Promise<void>(resolve=>server.close(()=>resolve()));database.close();});
+  const address=server.address() as {port:number};
+  const request=async(path:string,method='GET',body?:unknown)=>fetch(`http://127.0.0.1:${address.port}${path}`,{method,...(body!==undefined?{headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{})});
+  const persona=await (await request('/api/assistant-persona')).json();assert.equal(persona.revision,1);
+  const changed=await request('/api/assistant-persona','PUT',{expectedRevision:1,personality:'温柔、认真、有主见'});assert.equal(changed.status,200);
+  assert.equal((await request('/api/assistant-persona','PUT',{expectedRevision:1,personality:'过时修改'})).status,409);
+  const created=await request('/api/memories','POST',{content:'用户喜欢先看简短结论。',memoryType:'work_style'});assert.equal(created.status,201);
+  const first=await created.json();assert.equal(typeof first.revision,'string');
+  const edited=await request('/api/memories/'+first.id,'PATCH',{content:'用户喜欢结论后附上依据。',expectedRevision:first.revision});assert.equal(edited.status,200);
+  const current=await edited.json();assert.notEqual(current.revision,first.revision);
+  const history=await(await request('/api/memories/'+first.id+'/history')).json();assert.equal(history.versions.length,2);
+  assert.equal((await request('/api/memories/'+first.id,'DELETE',{expectedRevision:first.revision})).status,409);
+  const forgotten=await request('/api/memories/'+first.id,'DELETE',{expectedRevision:current.revision});assert.equal(forgotten.status,200);
+  const removed=await(await request('/api/memories/'+first.id+'/history')).json();assert.ok(removed.versions.every((row:any)=>row.snapshot.forgotten));
+  const overview=await(await request('/api/memory-overview')).json();assert.equal(overview.totalCount,0);
+  assert.equal(database.prepare("SELECT COUNT(*) AS n FROM memory_index_jobs WHERE status='pending'").get()?.n,1,'index work is durable and does not block the save response');
+});

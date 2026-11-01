@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
+import { memorySearchText } from '../domain/memories/memory-tokenizer.js';
 
 type Migration = { version: number; name: string; run: (database: DatabaseSync) => void };
 
@@ -696,6 +697,174 @@ migrations.push({ version: 20, name: 'self_diagnostics', run(database) {
     error_code TEXT, elapsed_ms INTEGER NOT NULL, created_at TEXT NOT NULL
   ); CREATE INDEX IF NOT EXISTS idx_self_diagnostics_conversation ON self_diagnostics(conversation_id, created_at);`);
 } });
+
+migrations.push({ version: 21, name: 'memory_context_revision', run(database) {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS memory_context_revision (
+      id INTEGER PRIMARY KEY CHECK(id=1), revision TEXT NOT NULL
+    );
+    INSERT OR IGNORE INTO memory_context_revision(id,revision) VALUES(1,lower(hex(randomblob(16))));
+    CREATE INDEX IF NOT EXISTS idx_memories_valid_from ON memories(valid_from);
+    CREATE INDEX IF NOT EXISTS idx_memories_valid_until ON memories(valid_until);
+  `);
+  // SQLite triggers cover all writers, including sync and other connections.
+  // A random revision avoids numeric overflow and stays transactional on rollback.
+  for (const table of ['memories', 'projects']) {
+    for (const operation of ['INSERT', 'UPDATE', 'DELETE']) {
+      database.exec(`CREATE TRIGGER IF NOT EXISTS revision_${table}_${operation.toLowerCase()}
+        AFTER ${operation} ON ${table} BEGIN
+          UPDATE memory_context_revision SET revision=lower(hex(randomblob(16))) WHERE id=1;
+        END;`);
+    }
+  }
+} });
+
+migrations.push({ version: 22, name: 'bounded_compression_and_memory_jobs', run(database) {
+  addColumn(database, 'conversations', 'compressed_through_message_id TEXT');
+  addColumn(database, 'conversations', 'compression_revision INTEGER NOT NULL DEFAULT 0');
+  addColumn(database, 'memory_observations', 'lease_token TEXT');
+  addColumn(database, 'memory_observations', 'lease_expires_at TEXT');
+  addColumn(database, 'memory_observations', 'attempt_count INTEGER NOT NULL DEFAULT 0');
+  addColumn(database, 'memory_observations', 'next_attempt_at TEXT');
+  addColumn(database, 'memory_observations', 'extraction_json TEXT');
+  database.exec(`CREATE TABLE IF NOT EXISTS memory_extraction_items (
+    observation_id TEXT NOT NULL REFERENCES memory_observations(id) ON DELETE CASCADE,
+    item_key TEXT NOT NULL,
+    memory_id TEXT REFERENCES memories(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (observation_id,item_key)
+  ); CREATE INDEX IF NOT EXISTS idx_memory_jobs_lease ON memory_observations(status,lease_expires_at,next_attempt_at);`);
+} });
+
+migrations.push({ version: 23, name: 'office_agent_runs', run(database) {
+  addColumn(database,'messages','run_id TEXT');
+  database.exec(`
+    CREATE TABLE agent_runs (
+      id TEXT PRIMARY KEY,conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+      input_id TEXT NOT NULL,user_message_id TEXT NOT NULL,project_id TEXT REFERENCES projects(id),goal TEXT NOT NULL,
+      status TEXT NOT NULL,model TEXT NOT NULL,execution_mode TEXT NOT NULL DEFAULT 'foreground',cancel_requested INTEGER NOT NULL DEFAULT 0,
+      checkpoint_json TEXT NOT NULL,answer TEXT NOT NULL DEFAULT '',error_message TEXT,
+      lease_token TEXT,lease_expires_at TEXT,revision INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,updated_at TEXT NOT NULL,UNIQUE(conversation_id,input_id)
+    );
+    CREATE TABLE agent_run_events (
+      id TEXT PRIMARY KEY,run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+      seq INTEGER NOT NULL,type TEXT NOT NULL,label TEXT NOT NULL,detail_json TEXT,created_at TEXT NOT NULL,UNIQUE(run_id,seq)
+    );
+    CREATE TABLE agent_invocations (
+      id TEXT PRIMARY KEY,run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,call_id TEXT NOT NULL,
+      tool_name TEXT NOT NULL,stable_id TEXT NOT NULL,fingerprint TEXT NOT NULL,arguments_json TEXT NOT NULL,
+      mode TEXT NOT NULL,status TEXT NOT NULL,proposal_id TEXT REFERENCES action_proposals(id),execution_id TEXT,
+      result_json TEXT,error_message TEXT,attempt INTEGER NOT NULL DEFAULT 0,late_result_json TEXT,
+      created_at TEXT NOT NULL,updated_at TEXT NOT NULL,UNIQUE(run_id,call_id)
+    );
+    CREATE TABLE agent_artifacts (
+      id TEXT PRIMARY KEY,run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,kind TEXT NOT NULL,
+      title TEXT NOT NULL,content TEXT NOT NULL DEFAULT '',document_id TEXT REFERENCES knowledge_documents(id) ON DELETE SET NULL,
+      file_id TEXT,sources_json TEXT NOT NULL DEFAULT '[]',created_at TEXT NOT NULL
+    );
+    CREATE TABLE generated_files (
+      id TEXT PRIMARY KEY,filename TEXT NOT NULL,mime_type TEXT NOT NULL,storage_path TEXT NOT NULL,
+      bytes INTEGER NOT NULL,sha256 TEXT NOT NULL,sources_json TEXT NOT NULL DEFAULT '[]',created_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_agent_runs_conversation ON agent_runs(conversation_id,created_at DESC);
+    CREATE INDEX idx_agent_runs_lease ON agent_runs(status,lease_expires_at);
+  `);
+} });
+
+migrations.push({version:24,name:'versioned_m3e_prototypes',run(database){
+  database.exec(`CREATE TABLE prototypes (
+    id TEXT PRIMARY KEY,document_id TEXT NOT NULL UNIQUE REFERENCES knowledge_documents(id) ON DELETE CASCADE,
+    project_id TEXT REFERENCES projects(id),title TEXT NOT NULL,revision TEXT NOT NULL,version INTEGER NOT NULL,
+    document_json TEXT NOT NULL,provider_commit TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL
+  );CREATE TABLE prototype_versions (
+    prototype_id TEXT NOT NULL REFERENCES prototypes(id) ON DELETE CASCADE,version INTEGER NOT NULL,revision TEXT NOT NULL,
+    document_json TEXT NOT NULL,title TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(prototype_id,version)
+  );CREATE INDEX idx_prototypes_project ON prototypes(project_id,updated_at);`);
+}});
+
+migrations.push({version:25,name:'searchable_conversation_archive',run(database){
+  database.exec(`CREATE VIRTUAL TABLE message_archive_fts USING fts5(message_id UNINDEXED,content,tokenize='trigram');
+    INSERT INTO message_archive_fts(message_id,content) SELECT id,content FROM messages;
+    CREATE TRIGGER message_archive_insert AFTER INSERT ON messages BEGIN INSERT INTO message_archive_fts(message_id,content) VALUES(new.id,new.content); END;
+    CREATE TRIGGER message_archive_delete AFTER DELETE ON messages BEGIN DELETE FROM message_archive_fts WHERE message_id=old.id; END;
+    CREATE TRIGGER message_archive_update AFTER UPDATE OF content ON messages BEGIN DELETE FROM message_archive_fts WHERE message_id=old.id; INSERT INTO message_archive_fts(message_id,content) VALUES(new.id,new.content); END;`);
+}});
+
+migrations.push({version:26,name:'hierarchical_rag_evidence',run(database){
+  database.exec(`
+    CREATE TABLE rag_generations (
+      id TEXT PRIMARY KEY,document_id TEXT NOT NULL REFERENCES knowledge_documents(id) ON DELETE CASCADE,
+      source_hash TEXT NOT NULL,title TEXT NOT NULL,config_hash TEXT NOT NULL,policy TEXT NOT NULL,tokenizer_id TEXT NOT NULL,
+      semantic INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL
+    );
+    CREATE INDEX rag_generations_document ON rag_generations(document_id,created_at);
+    CREATE TABLE rag_active (document_id TEXT PRIMARY KEY REFERENCES knowledge_documents(id) ON DELETE CASCADE,generation_id TEXT NOT NULL REFERENCES rag_generations(id) ON DELETE CASCADE);
+    CREATE TABLE rag_parents (
+      id TEXT PRIMARY KEY,generation_id TEXT NOT NULL REFERENCES rag_generations(id) ON DELETE CASCADE,position INTEGER NOT NULL,
+      heading TEXT NOT NULL,kind TEXT NOT NULL,prefix TEXT NOT NULL,core_start INTEGER NOT NULL,core_end INTEGER NOT NULL,
+      view_start INTEGER NOT NULL,view_end INTEGER NOT NULL,content TEXT NOT NULL,token_count INTEGER NOT NULL,locator_json TEXT NOT NULL
+    );CREATE INDEX rag_parents_generation ON rag_parents(generation_id,position);
+    CREATE TABLE rag_children (
+      id TEXT PRIMARY KEY,generation_id TEXT NOT NULL REFERENCES rag_generations(id) ON DELETE CASCADE,parent_id TEXT NOT NULL REFERENCES rag_parents(id) ON DELETE CASCADE,
+      position INTEGER NOT NULL,heading TEXT NOT NULL,kind TEXT NOT NULL,prefix TEXT NOT NULL,start_offset INTEGER NOT NULL,end_offset INTEGER NOT NULL,
+      content TEXT NOT NULL,token_count INTEGER NOT NULL,locator_json TEXT NOT NULL,hash_vector_json TEXT NOT NULL,search_text TEXT NOT NULL
+    );CREATE INDEX rag_children_parent ON rag_children(parent_id,position);CREATE INDEX rag_children_generation ON rag_children(generation_id,position);
+    CREATE VIRTUAL TABLE rag_children_fts USING fts5(child_id UNINDEXED,search_text,tokenize='unicode61 remove_diacritics 2');
+    CREATE TRIGGER rag_child_insert AFTER INSERT ON rag_children BEGIN INSERT INTO rag_children_fts(child_id,search_text) VALUES(new.id,new.search_text); END;
+    CREATE TRIGGER rag_child_delete AFTER DELETE ON rag_children BEGIN DELETE FROM rag_children_fts WHERE child_id=old.id; END;
+    CREATE TABLE rag_embeddings (
+      child_id TEXT NOT NULL REFERENCES rag_children(id) ON DELETE CASCADE,profile_id TEXT NOT NULL,model TEXT NOT NULL,
+      dimension INTEGER NOT NULL,version TEXT NOT NULL,embedding_json TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(child_id,profile_id)
+    );CREATE INDEX rag_embeddings_profile ON rag_embeddings(profile_id,dimension);
+    CREATE TABLE rag_embedding_state (generation_id TEXT NOT NULL REFERENCES rag_generations(id) ON DELETE CASCADE,profile_id TEXT NOT NULL,status TEXT NOT NULL,error TEXT,updated_at TEXT NOT NULL,PRIMARY KEY(generation_id,profile_id));
+    CREATE TABLE rag_sentence_vectors (text_hash TEXT NOT NULL,profile_id TEXT NOT NULL,vector_json TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(text_hash,profile_id));
+    CREATE TRIGGER rag_source_changed AFTER UPDATE OF content,title ON knowledge_documents WHEN new.content<>old.content OR new.title<>old.title BEGIN DELETE FROM rag_active WHERE document_id=new.id; END;
+    CREATE TABLE rag_jobs (id TEXT PRIMARY KEY,kind TEXT NOT NULL,status TEXT NOT NULL,current INTEGER NOT NULL DEFAULT 0,total INTEGER NOT NULL DEFAULT 0,detail_json TEXT NOT NULL DEFAULT '{}',created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
+  `);
+}});
+
+migrations.push({version:27,name:'continuous_chat_record_order',run(database){
+  database.exec('CREATE INDEX IF NOT EXISTS idx_messages_created_all ON messages(created_at DESC)');
+}});
+
+migrations.push({version:28,name:'authoritative_memory_versions',run(database){
+  addColumn(database,'memories','memory_revision INTEGER NOT NULL DEFAULT 1');
+  addColumn(database,'memories',"fact_key TEXT NOT NULL DEFAULT ''");
+  addColumn(database,'memories',"subject_key TEXT NOT NULL DEFAULT ''");
+  addColumn(database,'memories',"attribute_key TEXT NOT NULL DEFAULT ''");
+  addColumn(database,'memories',"details_json TEXT NOT NULL DEFAULT '{}'");
+  addColumn(database,'memories','last_observation_order INTEGER NOT NULL DEFAULT 0');
+  addColumn(database,'memories','learned_at TEXT');
+  addColumn(database,'memories','source_occurred_at TEXT');
+  addColumn(database,'memory_observations',"context_snapshot_json TEXT NOT NULL DEFAULT '{}'");
+  database.exec(`
+    CREATE INDEX idx_memories_fact_key ON memories(fact_key,status);
+    CREATE TABLE memory_history(memory_id TEXT NOT NULL,revision INTEGER NOT NULL,snapshot_json TEXT NOT NULL,
+      change_kind TEXT NOT NULL,observation_id TEXT,recorded_at TEXT NOT NULL,PRIMARY KEY(memory_id,revision));
+    CREATE TABLE memory_forgetting(memory_id TEXT PRIMARY KEY,scope_key TEXT NOT NULL,fact_key TEXT NOT NULL DEFAULT '',
+      content_hash TEXT NOT NULL,cutoff_order INTEGER NOT NULL,created_at TEXT NOT NULL);
+    CREATE INDEX idx_memory_forgetting_key ON memory_forgetting(scope_key,fact_key,cutoff_order);
+    CREATE TABLE memory_pending_claims(id TEXT PRIMARY KEY,observation_id TEXT NOT NULL REFERENCES memory_observations(id) ON DELETE CASCADE,
+      item_key TEXT NOT NULL,claim_json TEXT NOT NULL,reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'observing',effective_at TEXT,
+      expires_at TEXT,created_at TEXT NOT NULL,UNIQUE(observation_id,item_key));
+    CREATE TABLE memory_index_jobs(memory_id TEXT PRIMARY KEY REFERENCES memories(id) ON DELETE CASCADE,target_revision INTEGER NOT NULL,
+      status TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,updated_at TEXT NOT NULL);
+    CREATE TABLE assistant_persona(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL,profile_json TEXT NOT NULL,updated_at TEXT NOT NULL);
+    CREATE TABLE assistant_persona_history(revision INTEGER PRIMARY KEY,profile_json TEXT NOT NULL,created_at TEXT NOT NULL);
+    CREATE TRIGGER memory_forget_on_delete BEFORE DELETE ON memories BEGIN
+      INSERT OR REPLACE INTO memory_forgetting(memory_id,scope_key,fact_key,content_hash,cutoff_order,created_at)
+        VALUES(old.id,COALESCE(old.project_id,''),old.fact_key,'',(SELECT COALESCE(MAX(rowid),0) FROM memory_observations),strftime('%Y-%m-%dT%H:%M:%fZ','now'));
+      UPDATE memory_history SET snapshot_json='{}' WHERE memory_id=old.id;
+      DELETE FROM memories_fts WHERE memory_id=old.id;
+      DELETE FROM memory_reflections WHERE EXISTS(SELECT 1 FROM json_each(memory_reflections.source_ids_json) WHERE value=old.id);
+      UPDATE memory_context_revision SET revision=lower(hex(randomblob(16))) WHERE id=1;
+    END;
+  `);
+  database.exec('DELETE FROM memories_fts');
+  const insert=database.prepare('INSERT INTO memories_fts(memory_id,project_id,content,source_label) VALUES(?,?,?,?)');
+  for(const row of database.prepare("SELECT id,project_id,content,source_label FROM memories WHERE status='confirmed'").iterate())insert.run(String(row.id),String(row.project_id??''),memorySearchText(String(row.content)),memorySearchText(String(row.source_label)));
+}});
 
 export const latestSchemaVersion = migrations.at(-1)?.version ?? 0;
 

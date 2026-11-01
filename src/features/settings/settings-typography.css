@@ -1,0 +1,97 @@
+/* Settings reading order: section → group → field → optional guidance.
+   The established pearl palette and compact CJK type stay in place. */
+.refined-shell .settings-page.settings-hierarchy .settings-primary-nav {margin-bottom:24px;}
+.refined-shell .settings-page.settings-hierarchy .connection-layout {grid-template-columns:132px minmax(0,1fr);gap:30px;}
+.refined-shell .settings-page.settings-hierarchy .connection-nav {padding:0;border:0;border-radius:0;background:transparent;gap:4px;}
+.refined-shell .settings-page.settings-hierarchy .connection-nav button {min-height:51px;gap:9px;padding:9px 10px;align-items:flex-start;}
+.refined-shell .settings-page.settings-hierarchy .connection-nav button>span {gap:3px;}
+.refined-shell .settings-page.settings-hierarchy .connection-nav strong {font-size:11.5px;font-weight:500;color:inherit;line-height:1.5;}
+.refined-shell .settings-page.settings-hierarchy .connection-nav em {font-size:10px;line-height:1.5;font-weight:400;color:var(--quiet);}
+.refined-shell .settings-page.settings-hierarchy .connection-nav button[aria-pressed=true] strong {font-weight:600;}
+.refined-shell .settings-page.settings-hierarchy .connection-nav button>svg {margin-top:1px;}
+.refined-shell .settings-page.settings-hierarchy fieldset.settings-connection-fields {display:block;margin:0;padding:0;border:0;min-width:0;}
+.refined-shell .settings-page.settings-hierarchy fieldset.settings-connection-fields[hidden] {display:none!important;}
+.settings-pane-heading {display:flex;align-items:flex-start;justify-content:space-between;gap:20px;margin:0 0 25px;padding:0 0 19px;border-bottom:1px solid var(--line);}
+.refined-shell .settings-page.settings-hierarchy .settings-pane-heading h2 {margin:0;color:var(--ink);font-size:14px;font-weight:600;line-height:1.6;letter-spacing:0;}
+.refined-shell .settings-page.settings-hierarchy .settings-pane-heading p {max-width:64ch;margin:5px 0 0;color:var(--muted);font-size:11px;font-weight:400;line-height:1.75;}
+.refined-shell .settings-page.settings-hierarchy .settings-header-toggle {display:flex;align-items:center;justify-content:flex-end;flex:0 0 auto;gap:8px;padding-top:3px;color:var(--muted);font-size:10.5px;font-weight:400;white-space:nowrap;}
+.refined-shell .settings-page.settings-hierarchy .settings-header-toggle>span {font-size:10.5px;font-weight:400;}
+.refined-shell .settings-page.settings-hierarchy .settings-header-toggle input {width:14px;height:14px;margin:0;}
+.settings-field-group {min-width:0;margin:0;padding:0 0 22px;}
+.settings-field-group+.settings-field-group {padding-top:22px;border-top:1px solid var(--line);}
+.settings-field-group>header {display:flex;align-items:baseline;justify-content:space-between;gap:16px;min-width:0;margin-bottom:15px;}
+.refined-shell .settings-page.settings-hierarchy .settings-field-group>header h3 {margin:0;color:var(--ink);font-size:12px;font-weight:600;line-height:1.6;letter-spacing:0;}
+.settings-field-group>header>span {min-width:0;color:var(--quiet);font-size:10.5px;font-weight:400;line-height:1.6;text-align:right;}
+.settings-field-grid {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:15px 20px;min-width:0;}
+.settings-field-grid>.wide-setting {grid-column:1/-1;}
+.refined-shell .settings-page.settings-hierarchy .settings-field-grid label {display:grid;align-content:start;min-width:0;gap:7px;color:var(--muted);font-size:11px;font-weight:400;line-height:1.6;}
+.refined-shell .settings-page.settings-hierarchy .settings-field-grid label>span {font-size:11px;font-weight:400;line-height:1.5;}
+/* Editing uses a quiet surface change, without an extra border or focus ring. */
+.refined-shell .settings-page.settings-hierarchy .settings-form :where(input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]):not([type=color]),textarea):focus,
+.refined-shell .settings-page.settings-hierarchy .settings-form .secret-input:focus-within {outline:0;outline-offset:0;border-color:transparent;box-shadow:none;background:var(--accent-soft);}
+.refined-shell .settings-page.settings-hierarchy .secret-input input:focus {background:transparent;}
+.refined-shell .settings-page.settings-hierarchy .settings-field-grid .settings-inline-toggle {display:flex;align-items:center;justify-content:space-between;gap:12px;align-self:end;min-height:36px;padding:0;border:0;}
+.refined-shell .settings-page.settings-hierarchy .settings-field-grid .settings-inline-toggle>span {display:grid;gap:3px;}
+.refined-shell .settings-page.settings-hierarchy .settings-field-grid .settings-inline-toggle strong {font-size:11px;font-weight:500;line-height:1.5;color:var(--ink);}
+.refined-shell .settings-page.settings-hierarchy .settings-field-grid .settings-inline-toggle small {font-size:10.5px;font-weight:400;line-height:1.5;color:var(--quiet);}
+.refined-shell .settings-page.settings-hierarchy .settings-group-note {margin:0;color:var(--quiet);font-size:10.5px;font-weight:400;line-height:1.75;}
+.settings-help {min-width:0;margin:0;}
+.settings-help>summary {display:flex;align-items:center;gap:5px;width:max-content;max-width:100%;min-height:22px;list-style:none;color:var(--quiet);font-size:10.5px;line-height:1.65;font-weight:400;cursor:pointer;}
+.settings-help>summary::-webkit-details-marker {display:none;}
+.settings-help>summary>svg {flex:0 0 auto;stroke-width:1.5;}
+.settings-help>summary>svg:last-child {margin-left:3px;transition:transform 140ms ease;}
+.settings-help[open]>summary>svg:last-child {transform:rotate(180deg);}
+.settings-help>summary:hover {color:var(--accent-dark);}
+.settings-help>summary:focus-visible {outline:2px solid var(--focus);outline-offset:3px;border-radius:4px;}
+.settings-help>div {padding:10px 0 1px;max-width:68ch;}
+.refined-shell .settings-page.settings-hierarchy .settings-help p {margin:0 0 7px;color:var(--muted);font-size:10.5px;font-weight:400;line-height:1.85;overflow-wrap:anywhere;}
+.settings-group-footer {display:flex;align-items:flex-start;justify-content:space-between;gap:14px;min-width:0;}
+.settings-group-footer>.settings-help {flex:1;}
+.settings-group-footer>button {flex:0 0 auto;}
+.refined-shell .settings-page.settings-hierarchy .voice-answer-disclosure {margin:0 0 18px;border-top:1px solid var(--line);border-bottom:0;}
+.refined-shell .settings-page.settings-hierarchy .voice-answer-disclosure>summary {min-height:43px;font-size:11px;font-weight:500;}
+.refined-shell .settings-page.settings-hierarchy .voice-answer-disclosure>summary>small {font-size:10.5px;font-weight:400;}
+.refined-shell .settings-page.settings-hierarchy .connection-savebar {padding-top:13px;}
+.refined-shell .settings-page.settings-hierarchy .connection-savebar>p {font-size:10.5px;font-weight:400;color:var(--quiet);}
+
+.refined-shell .settings-page.settings-hierarchy :is(.companion-settings,.computer-settings) .settings-heading h2 {font-size:14px;font-weight:600;line-height:1.6;}
+.refined-shell .settings-page.settings-hierarchy :is(.companion-settings,.computer-settings) .settings-heading p {font-size:11px;font-weight:400;line-height:1.75;}
+.refined-shell .settings-page.settings-hierarchy .companion-settings-nav button {min-height:39px;}
+.refined-shell .settings-page.settings-hierarchy .companion-settings-nav strong {font-size:11.5px;font-weight:500;}
+.refined-shell .settings-page.settings-hierarchy .companion-settings-nav small {display:none;}
+.refined-shell .settings-page.settings-hierarchy .companion-settings-nav .companion-nav-section {margin:15px 8px 6px;font-size:10px;font-weight:400;}
+.refined-shell .settings-page.settings-hierarchy .companion-setting-stack :is(.companion-toggle,.companion-choice,.companion-slider) strong {font-size:11.5px;font-weight:500;line-height:1.6;}
+.refined-shell .settings-page.settings-hierarchy .companion-setting-stack :is(.companion-toggle,.companion-choice,.companion-slider) small {font-size:10.5px;font-weight:400;line-height:1.8;color:var(--muted);}
+.refined-shell .settings-page.settings-hierarchy .local-speech-connection {margin:0;}
+.refined-shell .settings-page.settings-hierarchy .local-speech-facts {grid-column:1/-1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:15px 24px;margin:0;}
+.refined-shell .settings-page.settings-hierarchy .local-speech-facts>div {padding:0 0 12px;border:0;}
+.refined-shell .settings-page.settings-hierarchy .local-speech-facts dt {margin:0 0 5px;color:var(--quiet);font-size:10.5px;font-weight:400;line-height:1.6;}
+.refined-shell .settings-page.settings-hierarchy .local-speech-facts dd {margin:0;color:var(--ink);font-size:12px;font-weight:400;line-height:1.8;}
+.refined-shell .settings-page.settings-hierarchy .speech-location-row {margin:0;padding:0;border:0;}
+.refined-shell .settings-page.settings-hierarchy .speech-location-row>label {min-width:0;flex:1;}
+.refined-shell .settings-page.settings-hierarchy .local-speech-actions {display:flex;gap:7px;flex-wrap:wrap;}
+.settings-state-row {display:flex;align-items:center;justify-content:space-between;gap:20px;padding:18px 0;border-bottom:1px solid var(--line);}
+.refined-shell .settings-page.settings-hierarchy .settings-state-row strong {font-size:12px;font-weight:500;}
+.refined-shell .settings-page.settings-hierarchy .settings-state-row p {margin:5px 0 0;color:var(--muted);font-size:11px;line-height:1.75;}
+.refined-shell .settings-page.settings-hierarchy .client-update-row {margin-top:0;padding-top:0;}
+.refined-shell .settings-page.settings-hierarchy .client-update-row span {font-size:10.5px;font-weight:400;color:var(--quiet);}
+.refined-shell .settings-page.settings-hierarchy .client-update-row strong {margin-top:7px;font-size:14px;font-weight:500;line-height:1.6;}
+.refined-shell .settings-page.settings-hierarchy .single-setting-section>.settings-pane-heading {padding-bottom:0;margin-bottom:24px;border:0;}
+.refined-shell .settings-page.settings-hierarchy .client-update-row {border-top:0;}
+.refined-shell .settings-page.settings-hierarchy .client-update-actions {margin-top:0;padding-top:16px;border-top:0;}
+.refined-shell .settings-page.settings-hierarchy .companion-settings-nav>p {font-size:10.5px;font-weight:400;line-height:1.8;color:var(--quiet);}
+@container settings (max-width:680px) {
+  .refined-shell .settings-page.settings-hierarchy .connection-layout {grid-template-columns:minmax(0,1fr);gap:21px;}
+  .refined-shell .settings-page.settings-hierarchy .connection-nav {padding:0 0 8px;gap:4px;border-bottom:1px solid var(--line);border-radius:0;}
+  .refined-shell .settings-page.settings-hierarchy .connection-nav button {min-height:30px;padding:6px 9px;align-items:center;}
+  .refined-shell .settings-page.settings-hierarchy .connection-nav button>svg {margin-top:0;}
+  .refined-shell .settings-page.settings-hierarchy .connection-nav em {display:none;}
+  .settings-field-grid {grid-template-columns:minmax(0,1fr);}
+  .refined-shell .settings-page.settings-hierarchy .settings-header-toggle {gap:6px;}
+  .settings-pane-heading {gap:12px;margin-bottom:22px;padding-bottom:17px;}
+  .settings-field-group {padding-bottom:20px;}
+  .settings-field-group+.settings-field-group {padding-top:20px;}
+  .refined-shell .settings-page.settings-hierarchy .settings-field-grid .settings-inline-toggle {min-height:34px;}
+  .refined-shell .settings-page.settings-hierarchy .local-speech-facts {grid-template-columns:minmax(0,1fr);gap:13px;}
+}
+@media(prefers-reduced-motion:reduce) {.settings-help>summary>svg:last-child {transition:none;}}

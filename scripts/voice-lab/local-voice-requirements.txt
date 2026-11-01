@@ -1,0 +1,12 @@
+# Isolated CPU experiment only; does not replace the shipping native runtime.
+cffi==2.1.1
+flatbuffers==25.12.19
+numpy==2.2.6
+onnxruntime==1.31.0
+packaging==26.3
+protobuf==7.36.2
+pycparser==3.12
+sentencepiece==0.2.1
+sherpa-onnx==1.13.8
+sherpa-onnx-core==1.13.8
+soundfile==0.13.1

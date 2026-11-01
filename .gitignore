@@ -16,3 +16,13 @@ releases/
 *.key
 *.secure
 website/
+
+.local/
+__pycache__/
+*.pyc
+*.tar.gz
+*.zip
+*.exe
+*.blockmap
+.impeccable/
+outputs-*.txt

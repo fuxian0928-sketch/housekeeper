@@ -1,20 +1,23 @@
 // Retry the same recording once; asking for another recording loses the user's sentence.
-export async function requestTranscript(audioDataUrl: string, signal: AbortSignal): Promise<string> {
+export async function requestTranscript(audioDataUrl: string, signal: AbortSignal, options: { timeoutMs?: number; retries?: number } = {}): Promise<string> {
   for (let attempt = 0; ; attempt++) {
     signal.throwIfAborted();
     try {
+      return await withVoiceDeadline(async requestSignal => {
       const response = await fetch('/api/speech/transcribe', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ audioDataUrl }),
-        signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)])
+        signal: requestSignal
       });
       const payload = await response.json() as { text?: string; message?: string };
+      requestSignal.throwIfAborted();
       if (!response.ok) throw Object.assign(new Error(payload.message || '语音识别暂不可用'), { retryable: response.status === 429 || response.status >= 500 });
       return payload.text ?? '';
+      }, signal, options.timeoutMs ?? 30_000);
     } catch (error) {
       signal.throwIfAborted();
       const retryable = error instanceof TypeError || (error instanceof DOMException && error.name === 'TimeoutError') || (error as { retryable?: boolean })?.retryable;
-      if (attempt || !retryable) throw error;
+      if (attempt >= (options.retries ?? 1) || !retryable) throw error;
     }
   }
 }

@@ -4,7 +4,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { CONVERSATION_IDLE_MS, IDLE_FAREWELL, listenUntilIdle, NoSpeechError } from './voice-listening';
 test('five minute default and exact farewell',()=>{
  assert.equal(CONVERSATION_IDLE_MS,300000);
- assert.equal(IDLE_FAREWELL,'那主人继续忙吧，小e先退下啦，有事主人随时叫我哦');
+ assert.equal(IDLE_FAREWELL,'那主人继续忙吧，希微先退下啦，有事主人随时叫我哦');
 });
 test('silence retries until deadline, then returns standby',async()=>{
  let attempts=0;

@@ -2,6 +2,16 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { requestTranscript, withVoiceDeadline } from './voice-request';
 
+test('wake recognition expires without retry even if transport ignores abort', async () => {
+ const original = globalThis.fetch;
+ let calls = 0;
+ try {
+  globalThis.fetch = (async () => { calls++; return new Promise(() => {}); }) as typeof fetch;
+  await assert.rejects(requestTranscript('wake', new AbortController().signal, { timeoutMs: 15, retries: 0 }), { name: 'TimeoutError' });
+  assert.equal(calls, 1);
+ } finally { globalThis.fetch = original; }
+});
+
 test('transient ASR failures retry the same audio, authorization errors do not', async () => {
  const original=globalThis.fetch; const bodies:unknown[]=[];
  try {

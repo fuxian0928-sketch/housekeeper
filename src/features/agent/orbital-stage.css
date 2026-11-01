@@ -1,0 +1,36 @@
+/* Full-bleed scene, sharing one live voice owner with the pearl view. */
+.refined-shell.orbital-shell .conversation-canvas {padding:0;overflow:hidden;position:relative;}
+.refined-shell.orbital-shell .workbench-voice.orbital-stage {position:absolute;inset:0;width:100%;height:100%;min-height:0;margin:0;padding:0;display:block;container-type:size;isolation:isolate;background:#0b1524;border:0;border-radius:inherit;}
+.refined-shell .orbital-stage[data-view=voice] {background:#fff;}
+.portrait-world {position:absolute;inset:0;--composition-height:max(100cqh,50cqw);opacity:1;visibility:visible;transition:opacity .22s ease,visibility .22s;}
+.orbital-stage[data-view=voice] .portrait-world {opacity:0;visibility:hidden;pointer-events:none;}
+.portrait-panorama {position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center top;}
+.portrait-character {position:absolute;left:0;top:calc(var(--composition-height)*.04);width:100%;height:var(--composition-height);}
+.portrait-character canvas {position:absolute;inset:0;width:100%;height:100%;opacity:0;}
+.portrait-character[data-ready=true] canvas {opacity:1;}
+.portrait-fallback {position:absolute;left:50%;translate:-50% 0;height:100%;width:calc(var(--composition-height)*2/3);max-width:none;object-fit:fill;}
+.portrait-character[data-ready=true] .portrait-fallback {visibility:hidden;}
+.portrait-shade {position:absolute;inset:0;pointer-events:none;background:linear-gradient(180deg,#35314b12,transparent 24%,transparent 66%,#17233338);transition:background .7s ease;}
+.portrait-world[data-light=false] .portrait-shade {background:#141a305e;}
+.portrait-loading {position:absolute;inset:0;display:grid;place-items:center;font-size:12px;color:#e8e8f3;}
+.portrait-load-message {position:absolute;bottom:70px;left:50%;translate:-50% 0;max-width:90%;width:max-content;padding:6px 10px;border-radius:8px;background:#172334dd;color:#fff;font-size:11px;}
+.portrait-load-message button {margin-left:8px;border:0;background:transparent;color:#bce9f2;text-decoration:underline;font:inherit;cursor:pointer;}
+.stage-view-controls {position:absolute;top:16px;right:16px;z-index:5;display:flex;gap:7px;}
+.stage-view-controls button {display:grid;place-items:center;width:34px;height:34px;border:1px solid #e1eff63b;border-radius:8px;color:#e7edf4;background:#10243766;backdrop-filter:blur(12px);cursor:pointer;transition:background .16s ease;}
+.stage-view-controls button:hover {background:#243b52b3;}
+.orbital-stage[data-view=voice] .stage-view-controls button {border-color:#e3e7ef;background:#ffffffd9;color:#69768b;}
+.orbital-voice-view {position:absolute;inset:0;display:grid;place-items:center;opacity:0;visibility:hidden;pointer-events:none;transition:opacity .22s ease,visibility .22s;}
+.orbital-stage[data-view=voice] .orbital-voice-view {opacity:1;visibility:visible;}
+.refined-shell .orbital-stage .voice-stage-visual {width:min(360px,68cqw,46cqh);height:auto;aspect-ratio:1;margin:0;transform:translateY(-28px);}
+.refined-shell .orbital-stage .voice-stage-visual .matrix-orb {width:100%;height:100%;}
+.refined-shell .orbital-stage .voice-stage-actions {position:absolute;z-index:4;top:auto;bottom:16px;left:50%;transform:translateX(-50%);margin:0;}
+.refined-shell .orbital-stage .voice-stage-actions button {display:flex;align-items:center;justify-content:center;gap:8px;min-width:118px;min-height:38px;border:1px solid #e3f0f4a6;border-radius:10px;background:#e8f3f5eb;color:#2e4c59;box-shadow:0 4px 14px #10263d19;backdrop-filter:blur(12px);font-size:12px;}
+.refined-shell .orbital-stage[data-view=voice] .voice-stage-actions {top:calc(50% + min(360px,68cqw,46cqh)/2 + 10px);bottom:auto;}
+.refined-shell .orbital-stage[data-view=voice] .voice-stage-actions button {min-width:0;min-height:34px;background:#fff;border-color:#e1e5ee;color:#536074;}
+.refined-shell.orbital-shell .conversation-canvas>.conversation-composer {position:absolute;z-index:6;bottom:16px;left:16px;right:16px;width:auto;}
+.refined-shell.orbital-shell .conversation-canvas>.conversation-composer:has(textarea:focus) {background:#fffffff5;}
+.refined-shell.orbital-shell .conversation-canvas:has(>.conversation-composer) .orbital-stage .voice-stage-actions {bottom:142px;top:auto;}
+.refined-shell.orbital-shell .conversation-canvas>.conversation-footnote {display:none;}
+.orbital-shell .workbench-header-actions .workbench-action-group {border:0;padding:0;}
+.orbital-shell .workbench-transcript>.conversation-composer {flex:0 0 auto;}
+@media(prefers-reduced-motion:reduce) {.portrait-world,.orbital-voice-view,.portrait-shade,.stage-view-controls button {transition:none!important;}.orbital-stage .voice-stage-orbit {animation:none!important;}}

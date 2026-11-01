@@ -1,6 +1,7 @@
+import { listUncertainToolCalls, reconcileToolCall } from '../domain/skills/external-tool-guard.js';
 import type { Express } from 'express';
 import {listHttpTools,saveHttpTool,deleteHttpTool} from '../domain/skills/http-tools.js';
-import {inspectSkill,saveSkillRequirements,skillRequirements,runSkillWorkbench,skillWorkbenchRuns,resumeSkillWorkbench} from '../domain/skills/skill-workbench.js';
+import {saveSkillRequirements,skillRequirements,runSkillWorkbench,skillWorkbenchRuns,resumeSkillWorkbench} from '../domain/skills/skill-workbench.js';
 import { inspectGitHubRepository, readGitHubFile } from '../domain/github/github-reader.js';
 import { buildManagedSkill, generateManagedSkillContent, installManagedSkill, listManagedSkills, setManagedSkillEnabled, uninstallManagedSkill, updateManagedSkill,resolveManagedSkillInstructions } from '../domain/skills/skill-manager.js';
 import { getSkillTool, listSkillTools, executeSkillTool } from '../domain/skills/skill-tool-registry.js';
@@ -10,6 +11,7 @@ import { listSkillRevisions, rollbackSkillRevision } from '../domain/skills/skil
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { listSkillExecutions } from '../domain/skills/skill-execution-audit.js';
+import {checkSkillHealth,readSkillHealthChecks} from '../domain/skills/skill-health.js';
 
 type Dependencies = {
   requestSignal: (request: any, response: any) => AbortSignal;
@@ -19,6 +21,13 @@ type Dependencies = {
 function statusCode(error: unknown) { return Number((error as { statusCode?: number }).statusCode ?? 500); }
 
 export function registerSkillRoutes(app: Express, dependencies: Dependencies) {
+  async function installedWithHealth<T extends {installed:boolean}>(result:T) {
+    if(!result.installed||!('id' in result)||typeof result.id!=='string')return result;
+    try{return {...result,health:await checkSkillHealth(result.id,dependencies.canUseModel()?dependencies.complete:undefined)};}
+    catch{return {...result,health:null,healthError:'技能已安装，自动检查暂未完成，可在技能详情中重试。'};}
+  }
+  app.get('/api/capabilities/uncertain',(_q,r)=>r.json(listUncertainToolCalls()));
+  app.post('/api/capabilities/uncertain/resolve',(q,r,next)=>{try{r.json(reconcileToolCall(q.body??{}));}catch(e){next(e);}});
   app.get('/api/capabilities/http',(_q,r)=>r.json(listHttpTools()));
   app.post('/api/skills/draft',async(q,r,next)=>{try{if(!dependencies.canUseModel())throw Object.assign(new Error('请先配置对话模型。'),{statusCode:400});r.json({content:await generateManagedSkillContent({name:String(q.body.name??''),description:String(q.body.description??''),instructions:String(q.body.instructions??'')},dependencies.complete)});}catch(e){next(e);}});
   app.post('/api/capabilities/http',(q,r,next)=>{try{r.status(201).json(saveHttpTool(q.body));}catch(e){next(e);}});
@@ -26,7 +35,7 @@ export function registerSkillRoutes(app: Express, dependencies: Dependencies) {
   app.delete('/api/capabilities/http/:id',(q,r,next)=>{try{deleteHttpTool(q.params.id);r.json({ok:true});}catch(e){next(e);}});
   app.get('/api/skills/:id/requirements',(q,r)=>r.json(skillRequirements(q.params.id)));
   app.put('/api/skills/:id/requirements',(q,r,next)=>{try{r.json(saveSkillRequirements(q.params.id,q.body.tools));}catch(e){next(e);}});
-  app.post('/api/skills/:id/check',async(q,r,next)=>{try{r.json(await inspectSkill(q.params.id,dependencies.canUseModel()?dependencies.complete:undefined));}catch(e){next(e);}});
+  app.post('/api/skills/:id/check',async(q,r,next)=>{try{r.json(await checkSkillHealth(q.params.id,dependencies.canUseModel()?dependencies.complete:undefined));}catch(e){next(e);}});
   app.post('/api/skills/:id/trigger-test',async(q,r,next)=>{try{
     if(!dependencies.canUseModel())throw Object.assign(new Error('请先配置可用的对话模型。'),{statusCode:400});
     const message=String(q.body.message??'').trim();if(!message||message.length>12000)throw Object.assign(new Error('请输入具体请求，最多12000字。'),{statusCode:400});
@@ -60,8 +69,11 @@ export function registerSkillRoutes(app: Express, dependencies: Dependencies) {
     try { response.json(await readGitHubFile(String(request.body?.url ?? ''), typeof request.body?.path === 'string' ? request.body.path : undefined, dependencies.requestSignal(request, response))); }
     catch (error) { response.status(statusCode(error)).json({ message: error instanceof Error ? error.message : 'GitHub 文件读取失败。' }); }
   });
-  app.get('/api/skills', (_request, response) => response.json(listManagedSkills()));
-  app.get('/api/skills/tools', (_request, response) => response.json(listSkillTools()));
+  app.get('/api/skills', (_request, response) => {const checks=readSkillHealthChecks();response.json(listManagedSkills().map(skill=>({...skill,health:checks.get(skill.id)??null})));});
+  app.get('/api/skills/tools', (_request, response) => {
+    const titles=new Map(listHttpTools().map(tool=>[tool.toolName,tool.name]));
+    response.json(listSkillTools().map(tool=>({...tool,displayName:titles.get(tool.name)})));
+  });
   app.patch('/api/skills/tools/:name/enabled', (request, response) => {
     if (!getSkillTool(request.params.name)) { response.status(404).json({message:'工具不存在。'}); return; }
     if (typeof request.body?.enabled !== 'boolean') { response.status(400).json({message:'请选择启用或停用。'}); return; }
@@ -79,21 +91,21 @@ export function registerSkillRoutes(app: Express, dependencies: Dependencies) {
   app.post('/api/skills/install', async (request, response) => {
     try {
       const result = await installManagedSkill(String(request.body?.url ?? ''), request.body?.allowRisky === true, dependencies.requestSignal(request, response));
-      response.status(result.installed ? 201 : 202).json(result);
+      response.status(result.installed ? 201 : 202).json(await installedWithHealth(result));
     } catch (error) { response.status(statusCode(error)).json({ message: error instanceof Error ? error.message : '技能安装失败。' }); }
   });
   app.post('/api/skills/build', async (request, response) => {
     try {
       const input = { name: String(request.body?.name ?? ''), description: String(request.body?.description ?? ''), instructions: String(request.body?.instructions ?? '') };
       const content = request.body?.generate !== false && dependencies.canUseModel() ? await generateManagedSkillContent(input, dependencies.complete) : undefined;
-      response.status(201).json(await buildManagedSkill({ ...input, content, replace: request.body?.replace === true }));
+      response.status(201).json(await installedWithHealth(await buildManagedSkill({ ...input, content, replace: request.body?.replace === true })));
     }
     catch (error) { response.status(statusCode(error)).json({ message: error instanceof Error ? error.message : '技能创建失败。' }); }
   });
   app.post('/api/skills/:id/update', async (request, response) => {
     try {
       const result = await updateManagedSkill(request.params.id, request.body?.allowRisky === true, dependencies.requestSignal(request, response));
-      response.status(result.installed ? 200 : 202).json(result);
+      response.status(result.installed ? 200 : 202).json(await installedWithHealth(result));
     } catch (error) { response.status(statusCode(error)).json({ message: error instanceof Error ? error.message : '技能更新失败。' }); }
   });
   app.patch('/api/skills/:id/enabled', (request, response) => {

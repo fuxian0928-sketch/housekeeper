@@ -9,7 +9,7 @@ export default defineConfig({
       ignored: ['**/outputs/**', '**/release/**', '**/build/**', '**/dist/**']
     },
     proxy: {
-      '/api': 'http://127.0.0.1:4310'
+      '/api': process.env.AI_SECRETARY_DEV_API_URL || 'http://127.0.0.1:4310'
     }
   }
 });

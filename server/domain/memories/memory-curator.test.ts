@@ -18,7 +18,7 @@ test('同类行为先聚合，语义相同的记忆只累计依据而不重复�
   assert.equal(grouped.count, 2);
   assert.equal((database.prepare(`SELECT COUNT(*) AS count FROM memory_observation_sources`).get() as { count: number }).count, 2);
 
-  const complete = async () => JSON.stringify({ memories: [{ action: 'add', content: '用户偏好先确认方案再修改代码', memoryType: 'work_style', scope: 'global', importance: 0.9, confidence: 0.98, reason: '稳定工作方式', autoApply: true }], reflection: '形成稳定工作偏好' });
+  const complete = async (input:string) => {const evidence=JSON.parse(input).evidence[0];return JSON.stringify({ memories: [{ action: 'add', content: '用户偏好先确认方案再修改代码', memoryType: 'work_style', scope: 'global',subject:'user',attribute:'work_style',facet:'方案确认',evidence:{sourceId:evidence.id,quote:evidence.text}, importance: 0.9, confidence: 0.98, reason: '稳定工作方式', autoApply: true }], reflection: '形成稳定工作偏好' });};
   recordMemoryObservation({ sourceType: 'onboarding', sourceId: 'profile-style', sourceLabel: '用户介绍', content: '喜欢先确认方案再改代码' });
   await processPendingObservations(complete, null, 20);
   recordMemoryObservation({ sourceType: 'conversation', sourceId: 'conversation-style', sourceLabel: '全局对话', content: '用户：以后都先确认方案再改代码' });

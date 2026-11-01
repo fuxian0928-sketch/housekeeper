@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { copyFile, mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, rename, stat } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { database, databaseDirectory, nowIso } from '../db.js';
-import { syncMemorySearch } from '../domain/memories/memory-service.js';
+import { forgetMemory } from '../domain/memories/memory-ledger.js';
 import { moveDocumentWithLinks } from '../domain/documents/document-service.js';
 import { reindexKnowledgeDocument, scanKnowledgeBase } from '../vault.js';
 
@@ -99,9 +99,7 @@ export async function undoActionProposal(id: string) {
   else if (proposal.action_type === 'task_create') undoResult = undoTasks(typeof result.taskId === 'string' ? [result.taskId] : [], id);
   else if (proposal.action_type === 'memory_create') {
     const memoryId = String(result.memoryId ?? '');
-    const timestamp = nowIso();
-    database.prepare(`UPDATE memories SET status = 'invalidated', invalidated_at = ?, updated_at = ? WHERE id = ?`).run(timestamp, timestamp, memoryId);
-    syncMemorySearch(memoryId);
+    forgetMemory(memoryId);
     undoResult = { memoryId, status: 'invalidated' };
   } else if (String(proposal.action_type).startsWith('document_')) undoResult = await undoDocument(proposal, result);
   else throw new Error('这类行动目前不支持自动撤销。');

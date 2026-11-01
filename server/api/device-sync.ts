@@ -1,5 +1,6 @@
 import type { Express, Response } from 'express';
 import { acceptCentralDocument, centralBlob, centralSyncStatus, compareCentralManifest, deleteCentralDocument } from '../sync/central-document-service.js';
+import {database} from '../db.js';
 
 function sendError(response: Response, error: unknown) {
   const status = Number((error as { statusCode?: number })?.statusCode ?? 500);
@@ -7,6 +8,12 @@ function sendError(response: Response, error: unknown) {
 }
 
 export function registerDeviceSyncRoutes(app: Express, dependencies: { onDocumentAccepted?: (documentId: string) => void } = {}) {
+  app.use('/api/device-sync',(request,response,next)=>{
+    if(request.method==='POST'&&database.prepare("SELECT value FROM app_settings WHERE key='device_sync_suspended'").get()?.value==='1'){
+      response.status(409).json({code:'LIBRARY_IMPORT_SUSPENDED',message:'资料库已初始化，旧设备自动导入已暂停。请重新选择要导入的资料后再启用。'});return;
+    }
+    next();
+  });
   app.get('/api/device-sync/status', (_request, response) => response.json(centralSyncStatus()));
   app.post('/api/device-sync/manifest', (request, response) => {
     try { response.json(compareCentralManifest(request.body)); } catch (error) { sendError(response, error); }

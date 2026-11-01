@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "purpose": "希微虚拟成年女声候选，供用户试听选择；不自动替换客户端音色",
+  "selection": {
+    "candidateId": "xiwei-sweet-soft",
+    "confirmedOn": "2026-10-25",
+    "referenceSha256": "d9a1bd9de87cceff2821e39cbdffcc866e633e78a41c7d54df9534e64370e771",
+    "localReproductionApproved": false,
+    "appIntegrated": false
+  },
+  "text": "主人，我是希微。你慢慢说，我在认真听呢。",
+  "candidates": [
+    {
+      "id": "xiwei-sweet-clear",
+      "label": "清甜元气",
+      "seed": 20261025,
+      "instruction": "二十多岁的年轻成年女性声音，普通话标准。音色清澈甜润，明亮轻盈，中高音域，带着自然的微笑和亲近感。像熟悉的朋友在轻松聊天，活泼但从容，语速正常略轻快，音调有细腻自然的起伏，句尾轻轻收住，停顿连贯自然，咬字清楚。"
+    },
+    {
+      "id": "xiwei-sweet-soft",
+      "label": "软甜温柔",
+      "seed": 20261026,
+      "instruction": "年轻成年女性的普通话声音，音色柔软甜美，细腻温暖，轻柔饱满，带一点自然的气息感。像近距离关心熟悉的人，声音带着浅浅笑意，亲昵又清楚。用自然口语的节奏说话，语速舒缓适中，轻重有变化，句子衔接流畅，字尾柔和。"
+    },
+    {
+      "id": "xiwei-sweet-playful",
+      "label": "俏皮明亮",
+      "seed": 20261027,
+      "instruction": "年轻成年女性声音，标准普通话，音色甜美清亮，明快有活力，声线轻巧灵动。说话时有俏皮的笑意，像认真又可爱的私人助理在陪主人聊天。节奏轻快自然，语气有灵动的抑扬顿挫，情绪真切，吐字清晰，停顿轻盈，声音干净舒适。"
+    }
+  ]
+}

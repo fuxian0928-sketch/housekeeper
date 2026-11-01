@@ -1,0 +1,4 @@
+.workbench-tab-panels{position:relative;isolation:isolate;}
+.workbench-tab-panels>.workbench-tab-panel{position:absolute;inset:0;min-width:0;min-height:0;background:var(--paper,#fff);}
+.workbench-tab-panel[data-active=true]{z-index:2;}
+.workbench-tab-panel[data-exiting=true]{z-index:1;pointer-events:none;}

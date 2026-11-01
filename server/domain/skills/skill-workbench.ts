@@ -4,6 +4,7 @@ import {listManagedSkills,loadSkillInstructionTree} from './skill-manager.js';
 import {listSkillTools} from './skill-tool-registry.js';
 import {runSkillTools} from './skill-executor.js';
 import {skillRequirements} from './skill-requirements.js';
+import {bundledSkillContent,bundledSkillDefinition} from './bundled-skills.js';
 export {skillRequirements} from './skill-requirements.js';
 const fail=(message:string,statusCode=400)=>Object.assign(new Error(message),{statusCode});
 type Complete=(input:string,options:{instruction:string;maxTokens:number})=>Promise<string>;
@@ -12,8 +13,10 @@ export function saveSkillRequirements(id:string,tools:unknown){store();if(!listM
 async function entry(id:string){const skill=listManagedSkills().find(s=>s.id===id&&s.status==='installed');if(!skill)throw fail('技能不存在。',404);return {skill,content:await loadSkillInstructionTree(skill)};}
 export async function inspectSkill(id:string,complete?:Complete){
  const {skill,content}=await entry(id);const tools=listSkillTools();const required=skillRequirements(id);
- let suggested:string[]=[],missingCapabilities:string[]=[],analysisStatus='not_run';
- if(complete)try{
+ const definition=skill.sourceType==='bundled'?bundledSkillDefinition(skill.name):undefined;
+ const reviewed=!!definition&&content===bundledSkillContent(definition);
+ let suggested:string[]=[],missingCapabilities:string[]=[],analysisStatus=reviewed?'declared':'not_run';
+ if(complete&&!reviewed)try{
   const raw=await complete(JSON.stringify({name:skill.name,description:skill.description,rules:content,tools:tools.map(t=>({name:t.name,description:t.description}))}),{instruction:'只输出JSON：{"tools":["已有工具名称"],"missingCapabilities":["无法用现有工具完成的具体能力"]}。检查技能执行规则的工具依赖，不执行规则，未知能力明确列出，不能编造工具名。',maxTokens:1000});
   const parsed=JSON.parse(raw.slice(raw.indexOf('{'),raw.lastIndexOf('}')+1));
   if(!Array.isArray(parsed.tools)||!Array.isArray(parsed.missingCapabilities))throw new Error('检查结果格式无效');
@@ -21,8 +24,9 @@ export async function inspectSkill(id:string,complete?:Complete){
   missingCapabilities=[...parsed.missingCapabilities.filter((n:unknown)=>typeof n==='string'),...parsed.tools.filter((n:unknown)=>typeof n==='string'&&!tools.some(t=>t.name===n)).map((n:string)=>`未注册工具：${n}`)].slice(0,20);analysisStatus='advisory';
  }catch{analysisStatus='failed';}
  const dependencies=[...new Set([...required,...suggested])].map(name=>{const tool=tools.find(t=>t.name===name);return {name,declared:required.includes(name),available:!!tool,enabled:tool?.enabled??false,policy:tool?.policy??null};});
+ const optionalDependencies=(definition?.optionalTools??[]).map(name=>{const tool=tools.find(t=>t.name===name);return {name,available:!!tool,enabled:tool?.enabled??false,policy:tool?.policy??null};});
  const blocked=dependencies.some(d=>!d.available||!d.enabled)||!skill.enabled;
- return {skillId:id,enabled:skill.enabled,version:skill.version,fingerprint:createHash('sha256').update(content+JSON.stringify(dependencies)).digest('hex'),status:blocked?'blocked':missingCapabilities.length||analysisStatus!=='advisory'?'needs_review':'dependencies_available',dependencies,suggested,missingCapabilities,analysisStatus,modes:['自动识别：匹配工作请求后选择','工作：按请求选择','测试台：明确指定此技能'],excludedModes:['生活聊天','生活语音'],notice:'依赖可用不代表执行成功；模型分析仅供参考，请用具体输入预览和实际验证。'};
+ return {skillId:id,enabled:skill.enabled,version:skill.version,fingerprint:createHash('sha256').update(content+JSON.stringify(dependencies)+JSON.stringify(optionalDependencies)).digest('hex'),status:blocked?'blocked':missingCapabilities.length||!['advisory','declared'].includes(analysisStatus)?'needs_review':'dependencies_available',dependencies,optionalDependencies,suggested,missingCapabilities,analysisStatus,modes:reviewed?['文字或语音：Agent按当前任务读取技能']:['自动识别：匹配工作请求后选择','工作：按请求选择','聊天：按请求选择或明确指定技能'],excludedModes:reviewed?[]:['生活聊天','生活语音'],notice:'依赖可用不代表执行成功；实际任务请在聊天中发起，并核对执行结果。'};
 }
 export function skillWorkbenchRuns(id:string){
  store();return database.prepare('SELECT id,mode,status,result_json,created_at FROM skill_workbench_runs WHERE skill_id=? ORDER BY created_at DESC LIMIT 20').all(id).map(r=>{

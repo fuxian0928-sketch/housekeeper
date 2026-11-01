@@ -1,0 +1,77 @@
+{
+  "schema": 1,
+  "platform": "win32-x64",
+  "python": {
+    "version": "3.11.16",
+    "file": "cpython-3.11.16+20260901-x86_64-pc-windows-msvc-install_only.tar.gz",
+    "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260901/cpython-3.11.16%2B20260901-x86_64-pc-windows-msvc-install_only.tar.gz",
+    "sha256": "6be524fa6752af802146a4adc7d098565425b0b1c166e19a5a7a4c8cccb86bf6",
+    "size": 47940627
+  },
+  "wheels": [
+    {
+      "name": "sherpa-onnx",
+      "version": "1.13.8",
+      "file": "sherpa_onnx-1.13.8-cp311-cp311-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/a8/95/9325a66149d5a54c53161eba9ba77f8ea7068dc8f921c3d8b75174261211/sherpa_onnx-1.13.8-cp311-cp311-win_amd64.whl",
+      "sha256": "171e6fac715bae20e11829e8dbfc70ed990ede1b35e6332f8121b27691a002de",
+      "size": 2283357
+    },
+    {
+      "name": "sherpa-onnx-core",
+      "version": "1.13.8",
+      "file": "sherpa_onnx_core-1.13.8-py3-none-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/94/38/64356ad97f68fffcf01fe7545407ad18a2ea86c1ffae5b0950f7fac73638/sherpa_onnx_core-1.13.8-py3-none-win_amd64.whl",
+      "sha256": "5579e80196d516e6dae23c8f629292ce3142ab8869925d32b94612fd86f93733",
+      "size": 16903581
+    },
+    {
+      "name": "numpy",
+      "version": "2.2.6",
+      "file": "numpy-2.2.6-cp311-cp311-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/31/0a/f354fb7176b81747d870f7991dc763e157a934c717b67b58456bc63da3df/numpy-2.2.6-cp311-cp311-win_amd64.whl",
+      "sha256": "e8213002e427c69c45a52bbd94163084025f533a55a59d6f9c5b820774ef3303",
+      "size": 12907455
+    },
+    {
+      "name": "psutil",
+      "version": "7.0.0",
+      "file": "psutil-7.0.0-cp37-abi3-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/50/1b/6921afe68c74868b4c9fa424dad3be35b095e16687989ebbb50ce4fceb7c/psutil-7.0.0-cp37-abi3-win_amd64.whl",
+      "sha256": "4cf3d4eb1aa9b348dec30105c55cd9b7d4629285735a102beb4441e38db90553",
+      "size": 244885
+    },
+    {
+      "name": "sounddevice",
+      "version": "0.5.2",
+      "file": "sounddevice-0.5.2-py3-none-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/e1/3e/61d88e6b0a7383127cdc779195cb9d83ebcf11d39bc961de5777e457075e/sounddevice-0.5.2-py3-none-win_amd64.whl",
+      "sha256": "e18944b767d2dac3771a7771bdd7ff7d3acd7d334e72c4bedab17d1aed5dbc22",
+      "size": 363808
+    },
+    {
+      "name": "cffi",
+      "version": "2.1.1",
+      "file": "cffi-2.1.1-cp311-cp311-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/73/c0/77ba02423c2f7d7091143c45cd49e0e6575c4c1967394bb542bd923a9b74/cffi-2.1.1-cp311-cp311-win_amd64.whl",
+      "sha256": "42f6930c31dc7f50732c9ae793c2786c7b6b044195967bbdde40bb9be81c4cc0",
+      "size": 185096
+    },
+    {
+      "name": "pycparser",
+      "version": "3.0",
+      "file": "pycparser-3.0-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/0c/c3/44f3fbbfa403ea2a7c779186dc20772604442dde72947e7d01069cbe98e3/pycparser-3.0-py3-none-any.whl",
+      "sha256": "b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992",
+      "size": 48172
+    },
+    {
+      "name": "pywebrtc-audio",
+      "version": "0.2.0",
+      "file": "pywebrtc_audio-0.2.0-cp311-cp311-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/4c/a3/e9eee1a9cf0ccbba3c909047255a8dc93fdd01f4bc214fb738b27076d1b2/pywebrtc_audio-0.2.0-cp311-cp311-win_amd64.whl",
+      "sha256": "1df9922c45b9707b7e5e76e3993bfbac133b4eadd72bcc05e1d444ca07fd8e61",
+      "size": 510741
+    }
+  ]
+}

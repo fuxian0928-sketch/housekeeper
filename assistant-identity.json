@@ -1,0 +1,9 @@
+{
+  "displayName": "希微",
+  "defaultWakeWord": "希微希微",
+  "defaultWakePhrases": ["希微", "希微希微"],
+  "legacyWakePhrases": ["小E", "小E小E", "小伊", "小伊小伊", "小艺", "小艺小艺"],
+  "legacyDefaultWakeWords": ["小E小E"],
+  "defaultFarewellText": "那主人继续忙吧，希微先退下啦，有事主人随时叫我哦",
+  "legacyDefaultFarewellTexts": ["那主人继续忙吧，小e先退下啦，有事主人随时叫我哦"]
+}

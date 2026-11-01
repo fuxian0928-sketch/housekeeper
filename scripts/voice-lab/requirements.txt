@@ -1,0 +1,9 @@
+# Experimental harness only. Not a production/client dependency.
+sherpa-onnx==1.13.8
+sherpa-onnx-core==1.13.8
+numpy==2.2.6
+psutil==7.0.0
+sounddevice==0.5.2
+cffi==2.1.1
+pycparser==3.0
+pywebrtc-audio==0.2.0

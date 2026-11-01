@@ -13,7 +13,7 @@ export function registerActionRoutes(app: Express) {
 
   app.post('/api/actions/:id/confirm', async (request, response, next) => {
     try {
-      response.json(await confirmAction(request.params.id));
+      response.json(await confirmAction(request.params.id,{deviceId:request.body?.deviceId,computerCaller:request.body?.computerCaller}));
     } catch (error) { next(error); }
   });
 

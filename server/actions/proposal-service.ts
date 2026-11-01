@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { database, nowIso } from '../db.js';
+import { nowIso } from '../db.js';
 import { actionProposalRepository } from '../storage/repositories/action-proposal-repository.js';
 
 export interface CreateProposalInput {

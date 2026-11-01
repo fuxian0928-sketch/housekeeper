@@ -1,0 +1,44 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import express from 'express';
+import {mkdtempSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {once} from 'node:events';
+import {streamAgentModel} from '../providers/agent-model.js';
+
+test('HTTP Agent workflow retains DeepSeek reasoning on resume and isolates the next task',async suite=>{
+  process.env.AI_SECRETARY_DB_PATH=join(mkdtempSync(join(tmpdir(),'deepseek-agent-http-')),'test.db');
+  const {database,initializeDatabase}=await import('../db.js');initializeDatabase();suite.after(()=>database.close());
+  const {registerAgentRoutes}=await import('./agent.js');
+  const {getAgentRun}=await import('../domain/agent/run-store.js');
+  const original=globalThis.fetch,requests:any[]=[];
+  const privateReasoning='PRIVATE_CHAIN_MUST_NEVER_REACH_UI_OR_SPEECH';
+  globalThis.fetch=async(url,init)=>{
+    if(!String(url).startsWith('https://deepseek-test.invalid'))return original(url,init);
+    const body=JSON.parse(String(init?.body));requests.push(body);
+    const resumed=body.messages.some((message:any)=>message.role==='tool');
+    const isDeep=body.thinking.type==='enabled';
+    const events=isDeep&&!resumed?[{choices:[{delta:{reasoning_content:privateReasoning,tool_calls:[{index:0,id:'ask-deep',function:{name:'ask_user',arguments:JSON.stringify({question:'请补充交付时间。'})}}]},finish_reason:'tool_calls'}]}]:[{choices:[{delta:{reasoning_content:isDeep?'PRIVATE_RESUME':'',content:resumed?'已收到时间，方案已整理。':'你好。'},finish_reason:'stop'}]}];
+    return new Response(events.map(event=>'data: '+JSON.stringify(event)+'\n\n').join('')+'data: [DONE]\n\n');
+  };
+  suite.after(()=>{globalThis.fetch=original;});
+  const app=express();app.use(express.json());
+  registerAgentRoutes(app,{canUseModel:()=>true,defaultModel:()=> 'deepseek-flash',defaultReasoning:()=> 'auto',requestSignal:()=>new AbortController().signal,model:(model,effort)=>(messages,tools,options)=>streamAgentModel({model,baseUrl:'https://deepseek-test.invalid/v1',apiKey:'test-only',messages,tools,reasoningEffort:options.reasoningEffort??effort,signal:options.signal,onText:options.onText})});
+  const server=app.listen(0,'127.0.0.1');await once(server,'listening');suite.after(()=>new Promise<void>(resolve=>server.close(()=>resolve())));
+  const base=`http://127.0.0.1:${(server.address() as {port:number}).port}`;
+  const post=async(path:string,body:unknown)=>{const response=await fetch(base+path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const text=await response.text();assert.equal(text.includes(privateReasoning),false);return{status:response.status,events:text.trim().split('\n').map(line=>JSON.parse(line))};};
+  const first=await post('/api/agent/runs',{message:'认真分析三个项目的风险，给我交付方案',interactionMode:'voice',deviceId:'test-device-one'});
+  assert.equal(first.status,200);const initial=first.events.at(-1);assert.equal(initial.runStatus,'waiting_input');
+  assert.equal(getAgentRun(initial.runId).checkpoint.reasoning?.effort,'high');
+  assert.equal(getAgentRun(initial.runId).checkpoint.messages.find(message=>message.role==='assistant')?.reasoning_content,privateReasoning);
+  const second=await post(`/api/agent/runs/${initial.runId}/continue`,{message:'下周五交付',deviceId:'test-device-one'});
+  assert.equal(second.events.at(-1).runStatus,'completed');
+  assert.equal(requests[1].thinking.type,'enabled');
+  assert.equal(requests[1].messages.find((message:any)=>message.tool_calls)?.reasoning_content,privateReasoning);
+  const view=await fetch(base+`/api/agent/runs/${initial.runId}`).then(response=>response.text());assert.equal(view.includes(privateReasoning),false);assert.equal(view.includes('reasoning_content'),false);
+  const next=await post('/api/agent/runs',{message:'你好',conversationId:initial.conversationId});
+  assert.equal(next.events.at(-1).runStatus,'completed');assert.equal(requests.at(-1).thinking.type,'disabled');
+  await post('/api/agent/runs',{message:'请比较方案风险，但简单说',reasoningEffort:'high'});assert.equal(requests.at(-1).thinking.type,'disabled');
+  const invalid=await post('/api/agent/runs',{message:'你好',reasoningEffort:'invalid'});assert.equal(invalid.status,400);
+});

@@ -10,7 +10,7 @@ function legacyDatabase() {
     CREATE TABLE projects (id TEXT PRIMARY KEY);
     CREATE TABLE tasks (id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id));
     CREATE TABLE conversations (id TEXT PRIMARY KEY);
-    CREATE TABLE messages (id TEXT PRIMARY KEY);
+    CREATE TABLE messages (id TEXT PRIMARY KEY, content TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT '2026-01-01');
     CREATE TABLE events (id TEXT PRIMARY KEY);
     CREATE TABLE memories (id TEXT PRIMARY KEY, project_id TEXT, content TEXT NOT NULL, source_label TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'candidate');
     CREATE TABLE knowledge_documents (id TEXT PRIMARY KEY);
@@ -21,6 +21,7 @@ function legacyDatabase() {
 
 test('旧数据库按版本迁移到最新结构且可重复运行', () => {
   const database = legacyDatabase();
+  database.prepare('INSERT INTO messages(id,content) VALUES(?,?)').run('legacy-message','迁移之前保留的历史消息');
   runMigrations(database);
   runMigrations(database);
   assert.equal(currentSchemaVersion(database), latestSchemaVersion);
@@ -35,5 +36,9 @@ test('旧数据库按版本迁移到最新结构且可重复运行', () => {
   const observationColumns = new Set((database.prepare('PRAGMA table_info(memory_observations)').all() as Array<{ name: string }>).map((item) => item.name));
   assert.ok(observationColumns.has('dedupe_key'));
   assert.ok(observationColumns.has('occurrence_count'));
+  assert.ok(database.prepare(`SELECT revision FROM memory_context_revision WHERE id=1`).get());
+  assert.equal(database.prepare(`SELECT count(*) AS count FROM sqlite_master WHERE type='trigger' AND name LIKE 'revision_%'`).get()?.count,6);
+  assert.equal(database.prepare("SELECT message_id FROM message_archive_fts WHERE message_archive_fts MATCH '历史消息'").get()?.message_id,'legacy-message');
+  assert.equal(database.prepare("SELECT content FROM messages WHERE id='legacy-message'").get()?.content,'迁移之前保留的历史消息');
   database.close();
 });

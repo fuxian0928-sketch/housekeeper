@@ -39,34 +39,36 @@ export function createKnowledgeDocument(input: Record<string, unknown>) {
   const content = markdown(title, input.content);
   if (Buffer.byteLength(content, 'utf8') > 2 * 1024 * 1024) throw httpError('单篇可编辑文档不能超过 2MB。', 413);
   const timestamp = nowIso();
-  const indexed = indexKnowledgeContent({ relativePath, content, modifiedAt: timestamp });
-  database.exec('BEGIN');
+  let indexed:ReturnType<typeof indexKnowledgeContent>;
+  database.exec('SAVEPOINT document_create');
   try {
+    indexed = indexKnowledgeContent({ relativePath, content, modifiedAt: timestamp, title });
     database.prepare(`UPDATE knowledge_documents SET source_type='server',server_revision=1,server_edited_at=? WHERE id=?`).run(timestamp, indexed.documentId);
     database.prepare(`INSERT INTO knowledge_document_versions(id,document_id,revision,title,content,source_type,created_at) VALUES(?,?,?,?,?,'server',?)`).run(randomUUID(), indexed.documentId, 1, title, content, timestamp);
     linkDocument(indexed.documentId, input.projectId, input.taskId);
-    database.exec('COMMIT');
-  } catch (error) { database.exec('ROLLBACK'); throw error; }
+    database.exec('RELEASE SAVEPOINT document_create');
+  } catch (error) { database.exec('ROLLBACK TO SAVEPOINT document_create; RELEASE SAVEPOINT document_create'); throw error; }
   onDocumentChanged?.(indexed.documentId);
   return documentRecord(indexed.documentId);
 }
 
 export function updateKnowledgeDocument(id: string, input: Record<string, unknown>) {
-  const existing = database.prepare(`SELECT id,relative_path,title,content,server_revision FROM knowledge_documents WHERE id=?`).get(id) as { id: string; relative_path: string; title: string; content: string; server_revision: number } | undefined;
+  const existing = database.prepare(`SELECT id,relative_path,title,content,server_revision,source_type FROM knowledge_documents WHERE id=?`).get(id) as { id: string; relative_path: string; title: string; content: string; server_revision: number;source_type:string } | undefined;
   if (!existing) throw httpError('文档不存在。', 404);
+  if(existing.source_type==='prototype')throw httpError('该资料来自已停用的原型能力，仅支持读取。',409);
   const title = input.title === undefined ? existing.title : cleanTitle(input.title);
   if (!title) throw httpError('请输入文档名称。', 400);
   const content = input.content === undefined ? existing.content : markdown(title, input.content);
   if (Buffer.byteLength(content, 'utf8') > 2 * 1024 * 1024) throw httpError('单篇可编辑文档不能超过 2MB。', 413);
   const timestamp = nowIso();
   const revision = Number(existing.server_revision || 1) + 1;
-  indexKnowledgeContent({ relativePath: existing.relative_path, content, modifiedAt: timestamp });
-  database.exec('BEGIN');
+  database.exec('SAVEPOINT document_update');
   try {
+    indexKnowledgeContent({ relativePath: existing.relative_path, content, modifiedAt: timestamp, title });
     database.prepare(`UPDATE knowledge_documents SET title=?,source_type='server',server_revision=?,server_edited_at=?,modified_at=? WHERE id=?`).run(title, revision, timestamp, timestamp, id);
     database.prepare(`INSERT INTO knowledge_document_versions(id,document_id,revision,title,content,source_type,created_at) VALUES(?,?,?,?,?,'server',?)`).run(randomUUID(), id, revision, title, content, timestamp);
-    database.exec('COMMIT');
-  } catch (error) { database.exec('ROLLBACK'); throw error; }
+    database.exec('RELEASE SAVEPOINT document_update');
+  } catch (error) { database.exec('ROLLBACK TO SAVEPOINT document_update; RELEASE SAVEPOINT document_update'); throw error; }
   onDocumentChanged?.(id);
   return documentRecord(id);
 }
@@ -89,4 +91,12 @@ export function setTaskDocumentLink(taskId: string, documentId: string, linked: 
 
 export function listKnowledgeDocumentVersions(id: string) {
   return database.prepare(`SELECT id,revision,title,source_type AS sourceType,created_at AS createdAt FROM knowledge_document_versions WHERE document_id=? ORDER BY revision DESC`).all(id);
+}
+
+export function getKnowledgeDocumentVersion(id:string,revision:number){
+  const document=getKnowledgeDocument(id);
+  if(!Number.isSafeInteger(revision)||revision<1)throw httpError('历史版本号无效。',400);
+  const row=database.prepare('SELECT revision,title,content,created_at AS createdAt FROM knowledge_document_versions WHERE document_id=? AND revision=?').get(id,revision);
+  if(!row)throw httpError('没有找到该历史版本。',404);
+  return {...row,documentId:id,relativePath:document.relativePath,content:String(row.content)};
 }

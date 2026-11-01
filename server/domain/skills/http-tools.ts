@@ -1,3 +1,4 @@
+import { unknownToolOutcome } from './tool-outcome.js';
 import {randomUUID} from 'node:crypto';
 import {AjvJsonSchemaValidator} from '@modelcontextprotocol/sdk/validation/ajv-provider.js';
 import {database} from '../../db.js';
@@ -26,7 +27,8 @@ export function saveHttpTool(input:Record<string,unknown>,id?:string){
 }
 export function deleteHttpTool(id:string){store();database.prepare('DELETE FROM custom_http_tools WHERE id=?').run(id);}
 export function httpToolDefinitions():SkillToolDefinition[]{return rows().map(t=>({name:toolName(t),description:`${t.name} · ${t.description}`,mode:'write',permission:'http.execute',riskLevel:'medium',parameters:t.schema_json}));}
-export async function callHttpTool(name:string,args:Record<string,unknown>){
+export async function callHttpTool(name:string,args:Record<string,unknown>,signal?:AbortSignal){
+ signal?.throwIfAborted();
  const tool=rows().find(t=>toolName(t)===name);if(!tool)throw fail('工具已修改或删除，请重新生成执行计划。',409);
  if(!new AjvJsonSchemaValidator().getValidator(JSON.parse(tool.schema_json))(args).valid)throw fail('参数不符合工具Schema，请检查必填项和类型。');
  const url=new URL(tool.url),headers:Record<string,string>={Accept:'application/json'};
@@ -34,9 +36,12 @@ export async function callHttpTool(name:string,args:Record<string,unknown>){
  let body:string|undefined;
  if(tool.method==='GET'){for(const [k,v] of Object.entries(args))url.searchParams.set(k,typeof v==='object'?JSON.stringify(v):String(v));}
  else{headers['Content-Type']='application/json';body=JSON.stringify(args);}
- const response=await fetch(url,{method:tool.method,headers,body,redirect:'error',signal:AbortSignal.timeout(20000)}).catch(()=>{throw fail('HTTP工具连接失败或超时，请检查地址与服务状态。',502);});
+ signal?.throwIfAborted();
+ try {
+ const response=await fetch(url,{method:tool.method,headers,body,redirect:'error',signal:AbortSignal.any([AbortSignal.timeout(20000),...(signal?[signal]:[])])}).catch(()=>{throw fail('HTTP工具连接失败或超时，请检查地址与服务状态。',502);});
  if(!response.ok)throw fail(`HTTP工具返回状态码 ${response.status}，请检查认证或请求参数。`,502);
  const reader=response.body?.getReader();let length=0;const chunks:Uint8Array[]=[];
  if(reader)try{while(true){const {done,value}=await reader.read();if(done)break;length+=value.length;if(length>1000000)throw fail('响应超过1MB，请缩小查询范围。',413);chunks.push(value);}}finally{await reader.cancel().catch(()=>{});}
  const text=Buffer.concat(chunks).toString('utf8');try{return JSON.parse(text);}catch{return {text};}
+ } catch(error) { if(tool.method!=='GET')throw unknownToolOutcome();throw error; }
 }
