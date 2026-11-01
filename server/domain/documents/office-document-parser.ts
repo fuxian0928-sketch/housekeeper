@@ -34,7 +34,7 @@ function cleanFilename(value: unknown) {
 function titleFromFilename(filename: string) { return filename.replace(/\.(docx|xlsx|pptx)$/i, '').trim().slice(0, 120) || '导入的 Office 文档'; }
 function escapeCell(value: string) { return value.replace(/\r?\n/g, '<br>').replace(/\|/g, '\\|').trim(); }
 
-function assertSafeOfficeArchive(buffer: Buffer) {
+export function assertSafeOfficeArchive(buffer: Buffer) {
   if (buffer[0] !== 0x50 || buffer[1] !== 0x4b) throw httpError('文件扩展名与内容不一致，未读取这个文件。', 422);
   let entries = 0; let expandedBytes = 0;
   try {
@@ -128,6 +128,11 @@ export function officeCapabilityStatus() {
   return { id: 'office-document-reader', name: 'Office 文档阅读', version: '1.0.0', status: 'ready', bundled: true, formats: ['docx', 'xlsx', 'pptx'], permissions: ['读取用户明确上传的文件', '写入受控原件目录', '写入知识库索引'], limits: { maximumBytes }, runtime: { mammoth: true, exceljs: true, pptxParser: true } };
 }
 
+export async function parseOfficeBuffer(buffer:Buffer,format:'docx'|'xlsx'|'pptx') {
+  assertSafeOfficeArchive(buffer);
+  return format==='docx'?parseDocx(buffer):format==='xlsx'?parseXlsx(buffer):parsePptx(buffer);
+}
+
 export async function importOfficeDocument(input: { filename?: unknown; contentBase64?: unknown; projectId?: unknown; taskId?: unknown }): Promise<OfficeImportResult> {
   const filename = cleanFilename(input.filename);
   const extension = extname(filename).toLowerCase();
@@ -145,7 +150,7 @@ export async function importOfficeDocument(input: { filename?: unknown; contentB
     if (typeof input.taskId === 'string' && input.taskId) setTaskDocumentLink(input.taskId, existing.document_id, true);
     return { importId: existing.id, document: { ...(getKnowledgeDocument(existing.document_id) as unknown as Record<string, unknown> & { id: string }), sourceType: 'office' }, filename, format, sha256, warnings: JSON.parse(existing.warnings_json), stats: JSON.parse(existing.stats_json), deduplicated: true };
   }
-  const parsed = format === 'docx' ? await parseDocx(buffer) : format === 'xlsx' ? await parseXlsx(buffer) : parsePptx(buffer);
+  const parsed = await parseOfficeBuffer(buffer,format);
   const title = titleFromFilename(filename);
   const content = `# ${title}\n\n> 来源文件：${filename}\n> 文件指纹：${sha256}\n> 解析格式：${format.toUpperCase()}\n\n${parsed.markdown}`;
   if (Buffer.byteLength(content, 'utf8') > 2 * 1024 * 1024) throw httpError('解析后的内容超过 2MB，请拆分工作簿或演示文稿后再导入。', 413);

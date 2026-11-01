@@ -1,13 +1,31 @@
 import type { Express } from 'express';
 import type { EmbeddingProvider } from '../providers/embedding-provider.js';
-import { createMemory, getMemoryOverview, indexSingleMemory, listMemories, listMemorySources, updateMemory, type CreateMemoryInput } from '../domain/memories/memory-service.js';
+import { createMemory, getMemoryOverview, listMemories, listMemorySources, updateMemory, type CreateMemoryInput } from '../domain/memories/memory-service.js';
 import { captureUnobservedEvents, getUserProfile, listMemoryObservations, memoryLearningStatus, processPendingObservations, updateUserProfile, type CuratorCompletion } from '../domain/memories/memory-curator.js';
+import { listMemoryHistory,forgetMemory,readMemoryRecord,memoryRevision } from '../domain/memories/memory-ledger.js';
+import { getAssistantPersona,updateAssistantPersona } from '../domain/memories/assistant-persona.js';
+import {buildMemoryGraph} from '../domain/memories/memory-graph.js';
 
 type Dependencies = { embeddingProvider: () => EmbeddingProvider | null; requestSignal: (request: Parameters<Express['get']>[0] extends never ? never : any, response: any) => AbortSignal; canUseModel: () => boolean; complete: CuratorCompletion };
 
 function statusCode(error: unknown) { return Number((error as { statusCode?: number }).statusCode ?? 500); }
 
 export function registerMemoryRoutes(app: Express, dependencies: Dependencies) {
+  app.get('/api/memory-graph',(request,response,next)=>{
+    try {
+      response.setHeader('Cache-Control','no-store');
+      response.json(buildMemoryGraph({query:typeof request.query.q==='string'?request.query.q:undefined,projectId:typeof request.query.projectId==='string'?request.query.projectId:null,history:request.query.history==='1',limit:Number(request.query.limit)||80}));
+    } catch(error){next(error);}
+  });
+  app.get('/api/assistant-persona',(_request,response)=>response.json(getAssistantPersona()));
+  app.put('/api/assistant-persona',(request,response)=>{try{response.json(updateAssistantPersona(request.body));}catch(error){response.status(statusCode(error)).json({message:error instanceof Error?error.message:'人设保存失败。'});}});
+  app.get('/api/memories/:id/history',(request,response)=>response.json({versions:listMemoryHistory(request.params.id)}));
+  app.delete('/api/memories/:id',(request,response)=>{try{
+    const row=readMemoryRecord(request.params.id);
+    if(!row){response.status(404).json({message:'记忆不存在。'});return;}
+    if(typeof request.body?.expectedRevision!=='string'||request.body.expectedRevision!==memoryRevision(row)){response.status(409).json({message:'请读取当前记忆版本后再遗忘。'});return;}
+    response.json(forgetMemory(request.params.id));
+  }catch(error){response.status(statusCode(error)).json({message:error instanceof Error?error.message:'遗忘失败。'});}});
   app.get('/api/memory-overview', (request, response) => response.json(getMemoryOverview(typeof request.query.projectId === 'string' ? request.query.projectId : null)));
   app.get('/api/memories', (request, response) => response.json(listMemories({ status: typeof request.query.status === 'string' ? request.query.status : null, projectId: typeof request.query.projectId === 'string' ? request.query.projectId : null })));
   app.get('/api/memories/:id/sources', (request, response) => { try { response.json(listMemorySources(request.params.id)); } catch (error) { response.status(statusCode(error)).json({ message: error instanceof Error ? error.message : '记忆来源读取失败。' }); } });
@@ -24,7 +42,6 @@ export function registerMemoryRoutes(app: Express, dependencies: Dependencies) {
   app.patch('/api/memories/:id', async (request, response, next) => {
     try {
       const memory = updateMemory(request.params.id, request.body as Parameters<typeof updateMemory>[1]);
-      if (memory.status === 'confirmed') await indexSingleMemory(request.params.id, dependencies.embeddingProvider(), dependencies.requestSignal(request, response)).catch(() => false);
       response.json(memory);
     } catch (error) { const status = statusCode(error); if (status < 500) response.status(status).json({ message: error instanceof Error ? error.message : '记忆更新失败。' }); else next(error); }
   });
@@ -41,7 +58,6 @@ export function registerMemoryRoutes(app: Express, dependencies: Dependencies) {
   app.put('/api/user-profile', async (request, response) => {
     try {
       const result = updateUserProfile((request.body && typeof request.body === 'object' ? request.body : {}) as Record<string, unknown>);
-      if (dependencies.canUseModel()) await processPendingObservations(dependencies.complete, dependencies.embeddingProvider(), 20);
       response.json({ ...result, learning: memoryLearningStatus() });
     } catch (error) { response.status(statusCode(error)).json({ message: error instanceof Error ? error.message : '用户介绍保存失败。' }); }
   });

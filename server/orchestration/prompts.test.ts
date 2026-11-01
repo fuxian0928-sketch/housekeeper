@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { assistantIdentityReply, BASE_ASSISTANT_PROMPT, CHAT_ASSISTANT_PROMPT } from './prompts.js';
+import { assistantIdentityReply, BASE_ASSISTANT_PROMPT, CHAT_ASSISTANT_PROMPT, VOICE_ASSISTANT_PROMPT } from './prompts.js';
 
-test('小 E 身份在工作与聊天提示词中保持一致', () => {
-  for (const prompt of [BASE_ASSISTANT_PROMPT, CHAT_ASSISTANT_PROMPT]) {
-    assert.match(prompt, /名字是“小 E”/);
+test('希微身份在工作、聊天与语音提示词中保持一致且保留主人称呼', () => {
+  for (const prompt of [BASE_ASSISTANT_PROMPT, CHAT_ASSISTANT_PROMPT, VOICE_ASSISTANT_PROMPT]) {
+    assert.match(prompt, /名字是“希微”/);
     assert.match(prompt, /称呼用户为“主人”/);
+    assert.doesNotMatch(prompt, /小\s*e/i);
   }
 });
 
@@ -17,7 +18,9 @@ test('聊天与复杂工作使用不同的回答长度策略', () => {
 });
 
 test('身份问题直接回答且不需要模型或 RAG', () => {
-  assert.match(assistantIdentityReply('你叫什么') ?? '', /主人.*小 E.*私人 AI 秘书/);
-  assert.match(assistantIdentityReply('你不是应该叫小E吗') ?? '', /主人.*小 E/);
+  for (const text of ['你叫什么', '希微是你吗', '希微叫什么', '你不是应该叫小E吗', '小 E是你吗', '小e是谁']) {
+    assert.match(assistantIdentityReply(text) ?? '', /主人.*希微.*私人 AI 秘书/, text);
+    assert.doesNotMatch(assistantIdentityReply(text) ?? '', /小\s*e/i);
+  }
   assert.equal(assistantIdentityReply('总结当前项目进展'), null);
 });

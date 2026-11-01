@@ -8,11 +8,13 @@ export function AppIconButton({ label, onClick, children, disabled = false }: { 
 
 export function FormSelect<T extends string>({ label, value, options, disabled = false, invalid = false, describedBy, onChange }: { label: string; value: T; options: ReadonlyArray<{ value: T; label: string; disabled?: boolean }>; disabled?: boolean; invalid?: boolean; describedBy?: string; onChange: (value: T) => void }) {
   const [open, setOpen] = useState(false);
-  const [position, setPosition] = useState({ left: 0, top: 0, width: 200, maxHeight: 280 });
+  const [position, setPosition] = useState({ left: 0, top: 0, width: 200, maxHeight: 280, transformOrigin: 'top center' });
   const rootRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const anchorRect = useRef<{ left: number; top: number } | null>(null);
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const typeahead = useRef({ text: '', at: 0 });
   const id = useId();
   const selectedIndex = options.findIndex(option => option.value === value);
   const focusOption = (index: number, direction = 1) => {
@@ -32,6 +34,7 @@ export function FormSelect<T extends string>({ label, value, options, disabled =
   useLayoutEffect(() => {
     if (!open || !triggerRef.current) return;
     const rect = triggerRef.current.getBoundingClientRect();
+    anchorRect.current = { left: rect.left, top: rect.top };
     const width = Math.min(rect.width, window.innerWidth - 24);
     if (menuRef.current) menuRef.current.style.width = `${width}px`;
     const below = window.innerHeight - rect.bottom - 16;
@@ -39,14 +42,20 @@ export function FormSelect<T extends string>({ label, value, options, disabled =
     const upwards = below < Math.min(280, options.length * 42 + 12) && above > below;
     const maxHeight = Math.max(80, Math.min(320, upwards ? above : below));
     const height = Math.min(maxHeight, menuRef.current?.scrollHeight ?? maxHeight);
-    setPosition({ left: Math.max(12, Math.min(rect.left, window.innerWidth - width - 12)), top: upwards ? Math.max(12, rect.top - height - 8) : rect.bottom + 8, width, maxHeight });
+    setPosition({ left: Math.max(12, Math.min(rect.left, window.innerWidth - width - 12)), top: upwards ? Math.max(12, rect.top - height - 6) : rect.bottom + 6, width, maxHeight, transformOrigin: upwards ? 'bottom center' : 'top center' });
+    typeahead.current = { text: '', at: 0 };
     focusOption(Math.max(0, selectedIndex));
   }, [open]);
   useEffect(() => {
     if (!open) return;
     const outside = (event: PointerEvent) => { if (!rootRef.current?.contains(event.target as Node) && !menuRef.current?.contains(event.target as Node)) setOpen(false); };
     const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); setOpen(false); triggerRef.current?.focus(); } };
-    const scroll = (event: Event) => { if (!menuRef.current?.contains(event.target as Node)) setOpen(false); };
+    const scroll = (event: Event) => {
+      if (menuRef.current?.contains(event.target as Node)) return;
+      const rect = triggerRef.current?.getBoundingClientRect(), anchor = anchorRect.current;
+      // A scroll event queued before opening must not close a correctly anchored menu.
+      if (!rect || !anchor || Math.abs(rect.top - anchor.top) > .5 || Math.abs(rect.left - anchor.left) > .5) setOpen(false);
+    };
     const resize = () => setOpen(false);
     document.addEventListener('pointerdown', outside);
     document.addEventListener('keydown', escape);
@@ -60,8 +69,17 @@ export function FormSelect<T extends string>({ label, value, options, disabled =
     {open && createPortal(<div ref={menuRef} id={id} className="glass-select-menu" style={position} role="listbox" aria-label={label} onBlur={event => { if (!rootRef.current?.contains(event.relatedTarget as Node) && !event.currentTarget.contains(event.relatedTarget as Node)) setOpen(false); }}>{options.map((option, index) => <button ref={element => { optionRefs.current[index] = element; }} className={option.value === value ? 'active' : ''} type="button" role="option" aria-selected={option.value === value} disabled={option.disabled} key={option.value} onClick={() => { onChange(option.value); setOpen(false); triggerRef.current?.focus(); }} onKeyDown={event => {
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); const direction = event.key === 'ArrowDown' ? 1 : -1; focusOption(index + direction, direction); }
       else if (event.key === 'Home' || event.key === 'End') { event.preventDefault(); focusOption(event.key === 'Home' ? 0 : options.length - 1, event.key === 'Home' ? 1 : -1); }
-      else if (event.key === 'Tab') { event.preventDefault(); setOpen(false); triggerRef.current?.focus(); }
-      else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey) { const match = options.findIndex((item, i) => i > index && item.label.toLowerCase().startsWith(event.key.toLowerCase()) && !item.disabled); if (match >= 0) focusOption(match); }
+      else if (event.key === 'Tab') { setOpen(false); triggerRef.current?.focus(); }
+      else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey && !event.nativeEvent.isComposing) {
+        event.preventDefault();
+        const key=event.key.toLocaleLowerCase(),now=performance.now(),prior=typeahead.current;
+        const query=now-prior.at<700&&prior.text!==key?prior.text+key:key;
+        typeahead.current={text:query,at:now};
+        for(let offset=1;offset<=options.length;offset++){
+          const next=(index+offset)%options.length,option=options[next];
+          if(!option.disabled&&option.label.toLocaleLowerCase().startsWith(query)){focusOption(next);break;}
+        }
+      }
     }}><span title={option.label}>{option.label}</span>{option.value === value && <Check size={15} aria-hidden="true" />}</button>)}</div>, rootRef.current?.closest('dialog[open]') ?? document.body)}
   </div>;
 }

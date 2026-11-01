@@ -1,3 +1,4 @@
+import { isUnknownToolOutcome } from '../domain/skills/tool-outcome.js';
 import { database, nowIso } from '../db.js';
 import { cancelProposal, completeProposal } from './proposal-service.js';
 import { undoActionProposal } from './undo-service.js';
@@ -7,6 +8,10 @@ import { executeSkillTool } from '../domain/skills/skill-tool-registry.js';
 import { findSkillExecutionByProposal, updateSkillExecution } from '../domain/skills/skill-execution-audit.js';
 import { createConversationTasks } from '../domain/tasks/conversation-task-tool.js';
 import { controlledTool } from '../domain/skills/tool-controls.js';
+import { getSkillTool } from '../domain/skills/skill-tool-registry.js';
+import { capabilityFingerprint } from '../domain/agent/catalog.js';
+import { appendAgentEvent,atomicAgentWrite,setAgentInvocationActive,updateAgentInvocation } from '../domain/agent/run-store.js';
+import {authorizeComputerCaller} from '../domain/interaction/computer-bridge.js';
 
 export function listActions(conversationId?: string | null) {
   const rows = actionProposalRepository.list(conversationId);
@@ -31,30 +36,52 @@ export function cancelAction(id: string) {
   return { ok: true, status: 'cancelled' };
 }
 
-export function confirmAction(id: string) {
+export function confirmAction(id: string,callerContext:{deviceId?:string;computerCaller?:unknown}={}) {
   const proposal = actionProposalRepository.find(id);
   if (!proposal) throw Object.assign(new Error('行动提案不存在。'), { statusCode: 404 });
   if (proposal.status === 'succeeded') return proposal.result_json ? JSON.parse(String(proposal.result_json)) : { ok: true };
   if (!['pending', 'edited'].includes(String(proposal.status))) throw Object.assign(new Error('这条行动提案已经执行或关闭。'), { statusCode: 409 });
   if (proposal.action_type === 'skill_tool') {
-    const payload = JSON.parse(String(proposal.payload_json)) as { skillId?:string;skillVersion?:string;toolName?: string; arguments?: Record<string, unknown>; conversationDrafts?: Parameters<typeof createConversationTasks>[0]; sourceId?:string; context?: { projectId?: string | null; vaultPath?: string } };
+    const payload = JSON.parse(String(proposal.payload_json)) as { skillId?:string;skillVersion?:string;toolName?: string; arguments?: Record<string, unknown>; conversationDrafts?: Parameters<typeof createConversationTasks>[0]; sourceId?:string; agentRunId?:string;invocationId?:string;capabilityFingerprint?:string;agentSkills?:Array<{id:string;version:string}>;context?: { projectId?: string | null; vaultPath?: string; runId?:string;deviceId?:string } };
+    if(payload.agentRunId){
+      if(payload.toolName?.startsWith('computer_')){
+        const caller=authorizeComputerCaller(callerContext.computerCaller);
+        const stored=database.prepare('SELECT checkpoint_json FROM agent_runs WHERE id=?').get(payload.agentRunId);
+        const interaction=stored?JSON.parse(String(stored.checkpoint_json)).interaction:null;
+        if(!caller||caller.deviceId!==payload.context?.deviceId||callerContext.deviceId!==caller.deviceId||caller.sessionId!==interaction?.computerSessionId)throw Object.assign(new Error('请在发起事务且仍获授权的本机确认电脑操作。'),{statusCode:409});
+      }
+      const run=database.prepare('SELECT status,cancel_requested FROM agent_runs WHERE id=?').get(payload.agentRunId);
+      const capability=payload.toolName?getSkillTool(payload.toolName):null;
+      if(!run||run.cancel_requested||!['running','waiting_approval'].includes(String(run.status)))throw Object.assign(new Error('这项事务已暂停、取消或等待核实，当前修改未执行。'),{statusCode:409});
+      if(!capability||capabilityFingerprint(capability)!==payload.capabilityFingerprint)throw Object.assign(new Error('能力配置已变化，请重新准备这项修改。'),{statusCode:409});
+      for(const selected of payload.agentSkills??[]){const skill=database.prepare('SELECT enabled,status,version FROM managed_skills WHERE id=?').get(selected.id);if(!skill?.enabled||skill.status!=='installed'||skill.version!==selected.version)throw Object.assign(new Error('相关技能已停用或更新，旧修改未执行。'),{statusCode:409});}
+    }
     if(payload.skillId){
       const skill=database.prepare('SELECT enabled,status,version FROM managed_skills WHERE id=?').get(payload.skillId);
       if(!skill?.enabled||skill.status!=='installed'||(payload.skillVersion&&String(skill.version)!==payload.skillVersion))throw Object.assign(new Error('技能已停用、移除或更新，请重新生成操作。'),{statusCode:409});
     }
     const execution = findSkillExecutionByProposal(id);
     if (!payload.toolName || !execution) throw Object.assign(new Error('技能工具提案不完整，无法执行。'), { statusCode: 409 });
-    const claimed=database.prepare("UPDATE action_proposals SET status='executing' WHERE id=? AND status IN ('pending','edited')").run(id);
+    atomicAgentWrite(()=>{const claimed=database.prepare("UPDATE action_proposals SET status='executing' WHERE id=? AND status IN ('pending','edited')").run(id);
     if(!claimed.changes)throw Object.assign(new Error('操作已开始，请勿重复执行。'),{statusCode:409});
     updateSkillExecution(String(execution.id), 'running');
-    const succeeded=(result:unknown)=>{completeProposal(String(proposal.id),result);updateSkillExecution(String(execution.id),'succeeded',result);return result;};
-    const failed=(error:unknown)=>{database.prepare("UPDATE action_proposals SET status='failed' WHERE id=?").run(id);updateSkillExecution(String(execution.id),'failed',undefined,error instanceof Error?error.message:'工具执行失败');throw error;};
+    if(payload.invocationId){updateAgentInvocation(payload.invocationId,'dispatching',{incrementAttempt:true});setAgentInvocationActive(payload.invocationId,true);}});
+    const succeeded=(result:unknown)=>{atomicAgentWrite(()=>{
+      completeProposal(String(proposal.id),result);updateSkillExecution(String(execution.id),'succeeded',result);
+      if(payload.agentRunId&&payload.invocationId){
+        const run=database.prepare('SELECT status,cancel_requested FROM agent_runs WHERE id=?').get(payload.agentRunId);
+        const stopped=!run||run.cancel_requested||!['running','waiting_approval'].includes(String(run.status));
+        updateAgentInvocation(payload.invocationId,stopped?'unknown':'succeeded',{result});
+        if(stopped){database.prepare("UPDATE agent_invocations SET late_result_json=? WHERE id=?").run(JSON.stringify(result??null),payload.invocationId);database.prepare("UPDATE agent_runs SET status='reconciling',updated_at=? WHERE id=?").run(nowIso(),payload.agentRunId);appendAgentEvent(payload.agentRunId,'late_receipt','原操作已返回，请核对结果后继续',{invocationId:payload.invocationId});}
+      }
+    });if(payload.invocationId)setAgentInvocationActive(payload.invocationId,false);return result;};
+    const failed=(error:unknown)=>{const code=Number((error as {statusCode?:number})?.statusCode);const unknown=isUnknownToolOutcome(error)||Boolean(payload.agentRunId&&(!code||code>=500));const detail=error instanceof Error?error.message:'工具执行失败';atomicAgentWrite(()=>{database.prepare("UPDATE action_proposals SET status=? WHERE id=?").run(unknown?'unknown':'failed',id);updateSkillExecution(String(execution.id),unknown?'unknown':'failed',undefined,detail);if(payload.invocationId)updateAgentInvocation(payload.invocationId,unknown?'unknown':'failed',{error:detail});if(unknown&&payload.agentRunId){database.prepare("UPDATE agent_runs SET status='reconciling',updated_at=? WHERE id=?").run(nowIso(),payload.agentRunId);appendAgentEvent(payload.agentRunId,'tool_unknown','已发送的修改需要核实',{invocationId:payload.invocationId});}else if((error as {controlBlocked?:boolean})?.controlBlocked&&payload.agentRunId){database.prepare("UPDATE agent_runs SET status='suspended',updated_at=? WHERE id=?").run(nowIso(),payload.agentRunId);appendAgentEvent(payload.agentRunId,'paused','本机控制暂不可用，事务已暂停');}});throw error;};
     try {
-      const result = payload.toolName==='create_task'&&payload.conversationDrafts ? controlledTool('create_task',()=>createConversationTasks(payload.conversationDrafts!,payload.sourceId??id),true) : executeSkillTool(payload.toolName, payload.arguments ?? {}, { projectId: payload.context?.projectId ?? null, vaultPath: payload.context?.vaultPath || 'central://documents',confirmed:true });
-      if(result&&typeof (result as Promise<unknown>).then==='function')return Promise.resolve(result).then(succeeded,failed);
+      const result = payload.toolName==='create_task'&&payload.conversationDrafts ? controlledTool('create_task',()=>createConversationTasks(payload.conversationDrafts!,payload.sourceId??id),true) : executeSkillTool(payload.toolName, payload.arguments ?? {}, { projectId: payload.context?.projectId ?? null, vaultPath: payload.context?.vaultPath || 'central://documents',runId:payload.context?.runId,deviceId:payload.context?.deviceId,confirmed:true });
+      if(result&&typeof (result as Promise<unknown>).then==='function')return Promise.resolve(result).then(succeeded,failed).finally(()=>{if(payload.invocationId)setAgentInvocationActive(payload.invocationId,false);});
       return succeeded(result);
     } catch (error) {
-      return failed(error);
+      try{return failed(error);}finally{if(payload.invocationId)setAgentInvocationActive(payload.invocationId,false);}
     }
   }
   if (proposal.action_type === 'task_create') {

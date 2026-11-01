@@ -1,0 +1,14 @@
+node_modules
+dist
+build
+outputs
+data
+releases
+.git
+.env
+.env.*
+*.db*
+*.sqlite*
+*.secure
+*.key
+*.pem

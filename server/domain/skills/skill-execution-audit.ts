@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { database, nowIso } from '../../db.js';
 
-export type SkillExecutionStatus = 'running' | 'pending_confirmation' | 'succeeded' | 'failed' | 'cancelled';
+export type SkillExecutionStatus = 'running' | 'pending_confirmation' | 'succeeded' | 'failed' | 'cancelled' | 'unknown' | 'reconciled';
 
 export function startSkillExecution(input: {
   skillId: string | null;
@@ -29,7 +29,7 @@ export function updateSkillExecution(id: string, status: SkillExecutionStatus, r
   const timestamp = nowIso();
   database.prepare(`UPDATE skill_tool_executions SET status=?, result_json=?, error_message=?,
     started_at=CASE WHEN ?='running' THEN COALESCE(started_at,?) ELSE started_at END,
-    completed_at=CASE WHEN ? IN ('succeeded','failed','cancelled') THEN ? ELSE completed_at END,
+    completed_at=CASE WHEN ? IN ('succeeded','failed','cancelled','unknown','reconciled') THEN ? ELSE completed_at END,
     updated_at=? WHERE id=?`).run(status, result === undefined ? null : JSON.stringify(result), error ?? null, status, timestamp, status, timestamp, timestamp, id);
 }
 

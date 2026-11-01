@@ -1,14 +1,23 @@
+const { DEFAULT_VOICE_PROCESSING, sanitizeVoiceProcessing, readVoiceProcessing } = require('./voice-processing-config.cjs');
+const { DEFAULT_VOICE_FAREWELL, sanitizeVoiceFarewell, readVoiceFarewell } = require('./voice-farewell-config.cjs');
+const { DEFAULT_VOICE_PREFETCH, sanitizeVoicePrefetch, readVoicePrefetch } = require('./voice-prefetch-config.cjs');
+const { voiceStatusMessage, voiceStatusState } = require('./voice-status-message.cjs');
+const { DEFAULT_VOICE_PROGRESS, sanitizeVoiceProgress, readVoiceProgress } = require('./voice-progress-config.cjs');
 const { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, screen, session, shell, Tray } = require('electron');
-const { createHash } = require('node:crypto');
+const { DEFAULT_VOICE_SYNTHESIS, sanitizeVoiceSynthesis, readVoiceSynthesis } = require('./voice-synthesis-config.cjs');
+const { DEFAULT_VOICE_TIMING, sanitizeVoiceTiming, readVoiceTiming } = require('./voice-timing-config.cjs');
+const { createHash, randomUUID } = require('node:crypto');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const net = require('node:net');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
+const {displayName,defaultWakeWord,migrateLegacyIdentityDefaults}=require('./assistant-identity.cjs');
 
 const DEFAULT_APP_PORT = 43120;
 let appPort = DEFAULT_APP_PORT;
 const persistentDataDirectory = path.join(app.getPath('appData'), 'housekeeper');
+const voiceClientId = require('./voice-client-id.cjs').readVoiceClientId(persistentDataDirectory);
 // v0.4 uses a fresh Electron runtime profile so an orphaned mutex from the
 // legacy desktop build cannot prevent startup. Business data and encrypted
 // secrets intentionally remain in the established persistent data directory.
@@ -17,14 +26,46 @@ let mainWindow = null;
 let companionWindow = null;
 let tray = null;
 let isQuitting = false;
+let localServiceReady = false;
 let companionState = 'idle';
 let updateInFlight = null;
 let speechProcess = null;
+// Explicit development overrides are separate from the persisted packaged choice.
+const nativeVoiceConfigFile = !app.isPackaged ? process.env.AI_SECRETARY_NATIVE_VOICE_CONFIG : '';
+const nativeVoiceBundleRoot = app.isPackaged ? path.join(process.resourcesPath, 'native-voice') : process.env.AI_SECRETARY_NATIVE_VOICE_BUNDLE || '';
+const voiceEngineSelection = require('./voice-engine-selection.cjs').createVoiceEngineSelection({dataDirectory:persistentDataDirectory,bundleRoot:nativeVoiceBundleRoot,forcedNative:Boolean(nativeVoiceConfigFile),verifyBundle:require('./native-voice-bundle.cjs').verifyNativeVoiceBundle});
+const nativeVoiceManaged = voiceEngineSelection.current === 'native';
+const activeVoiceBundleRoot = nativeVoiceManaged && !nativeVoiceConfigFile ? nativeVoiceBundleRoot : '';
+const nativeVoiceWorkerRoot = activeVoiceBundleRoot || app.getAppPath();
+let nativeVoiceHost = null;
+let nativeVoiceError = null;
+let nativeVoiceStarting = null;
+let computerBridgeHost=null;
+let interactionFocus=null;
+global.__AI_SECRETARY_DEVICE_CONTEXT__=()=>({deviceId:voiceClientId,interactionContext:{focus:interactionFocus},computerCaller:computerBridgeHost?.authorization()});
+function localComputerHost(){
+  if(!computerBridgeHost){
+    if(!safeStorage.isEncryptionAvailable())throw Error('当前Windows无法安全保存本机控制身份。');
+    const driver=require('./windows-mcp-client.cjs').createWindowsMcpClient();
+    computerBridgeHost=require('./computer-bridge-host.cjs').createComputerBridgeHost({port:appPort,deviceId:voiceClientId,dataDirectory:persistentDataDirectory,driver,encrypt:value=>safeStorage.encryptString(value),decrypt:value=>safeStorage.decryptString(value)});
+  }
+  return computerBridgeHost;
+}
+function receiveNavigation(request){
+  if(request.deviceId&&request.deviceId!==voiceClientId)return;
+  showMainWindow('chat');
+  const send=()=>mainWindow?.webContents.send('assistant:navigate',request);
+  if(mainWindow?.webContents.isLoadingMainFrame())mainWindow.webContents.once('did-finish-load',send);else send();
+}
+const voiceSecrets = require('./voice-secret-store.cjs').createVoiceSecretStore(persistentDataDirectory, safeStorage);
+let voiceConnectionHold = null;
 const ownsSingleInstanceLock = app.requestSingleInstanceLock();
 
+const voicePreferenceHistory = require('./voice-preference-history.cjs').createVoicePreferenceHistory(persistentDataDirectory);
 const companionConfigPath = path.join(persistentDataDirectory, 'desktop-companion.json');
 const defaultCompanionConfig = Object.freeze({
   enabled: false,
+  voiceEnabled: false,
   alwaysOnTop: true,
   appearance: 'character',
   iconSize: 64,
@@ -32,37 +73,51 @@ const defaultCompanionConfig = Object.freeze({
   opacity: 1,
   motion: 'full',
   launchAtStartup: false,
+  ...DEFAULT_VOICE_PROCESSING, ...DEFAULT_VOICE_FAREWELL, ...DEFAULT_VOICE_SYNTHESIS, ...DEFAULT_VOICE_TIMING, ...DEFAULT_VOICE_PROGRESS, ...DEFAULT_VOICE_PREFETCH,
   idleHideMinutes: 0,
-  mockMode: true,
+  mockMode: !nativeVoiceManaged,
   voiceName: 'Microsoft Yaoyao',
   speechRate: 0,
   speechVolume: 100,
   cameraContextEnabled: false,
   voiceChatModel: '',
+  voiceReasoningEffort: 'follow',
+  voiceRoutingMode: 'auto',
+  voiceProjectId: '',
   visionModel: '',
   wakeWordEnabled: false,
-  wakeWord: '小E小E',
+  wakeWord: defaultWakeWord,
   wakeWordThreshold: 0.66
 });
 
 function readCompanionConfig() {
   try {
-    const saved = JSON.parse(fs.readFileSync(companionConfigPath, 'utf8'));
+    const saved = migrateLegacyIdentityDefaults(JSON.parse(fs.readFileSync(companionConfigPath, 'utf8')));
     const { size: _legacyScale, ...current } = saved ?? {};
-    return { ...defaultCompanionConfig, ...current, appearance: current.appearance === 'icon' ? 'icon' : 'character', iconSize: Number.isFinite(current.iconSize) ? Math.min(96, Math.max(48, Math.round(current.iconSize))) : defaultCompanionConfig.iconSize, characterHeight: Number.isFinite(current.characterHeight) ? Math.min(300, Math.max(180, Math.round(current.characterHeight))) : defaultCompanionConfig.characterHeight, position: saved?.position };
+    current.voiceRoutingMode = ['life', 'work', 'auto'].includes(current.voiceRoutingMode) ? current.voiceRoutingMode : 'auto';
+    // User approved the voice-first experience; migrate the old life-only default once.
+    if(current.voiceFirstVersion!==1&&current.voiceRoutingMode==='life')current.voiceRoutingMode='auto';
+    current.voiceFirstVersion=1;
+    current.voiceProjectId = typeof current.voiceProjectId === 'string' ? current.voiceProjectId.slice(0, 160) : '';
+    Object.assign(current,require('./companion-voice-update.cjs').restoredVoiceFlags(current,nativeVoiceManaged));
+    // The old voiceChatModel default was never sent to either voice path.
+    // Existing installations therefore continue to follow the chat model.
+    current.voiceChatModel = current.voiceAnswerConfigured === true && typeof current.voiceChatModel === 'string' ? current.voiceChatModel.trim().slice(0, 160) : '';
+    current.voiceReasoningEffort = current.voiceAnswerConfigured === true && ['follow', 'auto', 'low', 'medium', 'high'].includes(current.voiceReasoningEffort) ? current.voiceReasoningEffort : 'follow';
+    return { ...defaultCompanionConfig, ...current, ...readVoiceProcessing(current), ...readVoiceFarewell(current), ...readVoiceSynthesis(current), ...readVoiceTiming(current), ...readVoiceProgress(current), ...readVoicePrefetch(current), appearance: current.appearance === 'icon' ? 'icon' : 'character', iconSize: Number.isFinite(current.iconSize) ? Math.min(96, Math.max(48, Math.round(current.iconSize))) : defaultCompanionConfig.iconSize, characterHeight: Number.isFinite(current.characterHeight) ? Math.min(300, Math.max(180, Math.round(current.characterHeight))) : defaultCompanionConfig.characterHeight, position: saved?.position };
   } catch {
     return { ...defaultCompanionConfig };
   }
 }
 
 function saveCompanionConfig(config) {
-  fs.mkdirSync(path.dirname(companionConfigPath), { recursive: true });
-  fs.writeFileSync(companionConfigPath, JSON.stringify(config, null, 2), 'utf8');
+  require('./atomic-json-store.cjs').saveJsonAtomically(companionConfigPath,config);
 }
 
 function sanitizeCompanionChanges(changes) {
-  const next = {};
+  const next = { ...sanitizeVoiceProcessing(changes), ...sanitizeVoiceFarewell(changes), ...sanitizeVoiceSynthesis(changes), ...sanitizeVoiceTiming(changes), ...sanitizeVoiceProgress(changes), ...sanitizeVoicePrefetch(changes) };
   if (typeof changes?.enabled === 'boolean') next.enabled = changes.enabled;
+  if (typeof changes?.voiceEnabled === 'boolean') next.voiceEnabled = changes.voiceEnabled;
   if (typeof changes?.alwaysOnTop === 'boolean') next.alwaysOnTop = changes.alwaysOnTop;
   if (changes?.appearance === 'icon' || changes?.appearance === 'character') next.appearance = changes.appearance;
   if (Number.isFinite(changes?.iconSize)) next.iconSize = Math.min(96, Math.max(48, Math.round(Number(changes.iconSize))));
@@ -74,11 +129,15 @@ function sanitizeCompanionChanges(changes) {
   if (typeof changes?.mockMode === 'boolean') next.mockMode = changes.mockMode;
   if (typeof changes?.microphoneDeviceId === 'string') next.microphoneDeviceId = changes.microphoneDeviceId.slice(0, 512);
   if (typeof changes?.cameraDeviceId === 'string') next.cameraDeviceId = changes.cameraDeviceId.slice(0, 512);
+  if (typeof changes?.cameraFollowSystemDefault === 'boolean') next.cameraFollowSystemDefault = changes.cameraFollowSystemDefault;
   if (typeof changes?.voiceName === 'string') next.voiceName = changes.voiceName.slice(0, 160);
   if (Number.isFinite(changes?.speechRate)) next.speechRate = Math.min(5, Math.max(-5, Math.round(Number(changes.speechRate))));
   if (Number.isFinite(changes?.speechVolume)) next.speechVolume = Math.min(100, Math.max(0, Math.round(Number(changes.speechVolume))));
   if (typeof changes?.cameraContextEnabled === 'boolean') next.cameraContextEnabled = changes.cameraContextEnabled;
-  if (typeof changes?.voiceChatModel === 'string') next.voiceChatModel = changes.voiceChatModel.slice(0, 160);
+  if (typeof changes?.voiceChatModel === 'string') { next.voiceChatModel = changes.voiceChatModel.trim().slice(0, 160); next.voiceAnswerConfigured = true; }
+  if (['follow', 'auto', 'low', 'medium', 'high'].includes(changes?.voiceReasoningEffort)) { next.voiceReasoningEffort = changes.voiceReasoningEffort; next.voiceAnswerConfigured = true; }
+  if (['life', 'work', 'auto'].includes(changes?.voiceRoutingMode)) next.voiceRoutingMode = changes.voiceRoutingMode;
+  if (typeof changes?.voiceProjectId === 'string') next.voiceProjectId = changes.voiceProjectId.trim().slice(0, 160);
   if (typeof changes?.visionModel === 'string') next.visionModel = changes.visionModel.slice(0, 160);
   if (typeof changes?.wakeWordEnabled === 'boolean') next.wakeWordEnabled = changes.wakeWordEnabled;
   if (typeof changes?.wakeWord === 'string' && changes.wakeWord.trim()) next.wakeWord = changes.wakeWord.trim().slice(0, 24);
@@ -117,6 +176,7 @@ function companionWindowSize(config) {
 }
 
 function emitCompanionState() {
+  mainWindow?.webContents.send('companion:state-changed', companionState);
   companionWindow?.webContents.send('companion:state-changed', companionState);
 }
 
@@ -137,11 +197,18 @@ function showMainWindow(target = 'chat') {
 function buildCompanionMenu() {
   const config = readCompanionConfig();
   return Menu.buildFromTemplate([
-    { label: companionWindow?.isVisible() ? '隐藏小E' : '显示小E', click: () => companionWindow?.isVisible() ? companionWindow.hide() : showCompanionWindow() },
-    { label: '打开 AI 秘书', click: () => showMainWindow('chat') },
-    { label: '桌面小E设置', click: () => showMainWindow('settings') },
+    { label: companionWindow?.isVisible() ? '隐藏希微' : '显示希微', click: () => companionWindow?.isVisible() ? companionWindow.hide() : showCompanionWindow() },
+    { label: '打开希微', click: () => showMainWindow('chat') },
+    { label: '桌面希微设置', click: () => showMainWindow('settings') },
     { type: 'separator' },
-    { label: '开始聆听', enabled: config.mockMode, click: () => setCompanionState('listening') },
+    { label: '手动开始语音', enabled: config.voiceEnabled !== false && !config.mockMode, click: () => {
+      if (nativeVoiceManaged) nativeVoiceHost?.control('wake');
+      else {
+        const win = showCompanionWindow();
+        if (win.webContents.isLoading()) win.webContents.once('did-finish-load', () => win.webContents.send('companion:manual-wake'));
+        else win.webContents.send('companion:manual-wake');
+      }
+    } },
     { label: '状态模拟', enabled: config.mockMode, submenu: [
       ['idle', '待机'], ['listening', '聆听'], ['thinking', '思考'], ['speaking', '说话'], ['notifying', '提醒'], ['camera', '视觉']
     ].map(([state, label]) => ({ label, type: 'radio', checked: companionState === state, click: () => setCompanionState(state) })) },
@@ -153,7 +220,7 @@ function buildCompanionMenu() {
 function createTray() {
   if (tray) return;
   tray = new Tray(path.join(__dirname, 'assets', 'icon.ico'));
-  tray.setToolTip('小E · AI 秘书');
+  tray.setToolTip('希微 · AI 秘书');
   tray.on('click', () => companionWindow?.isVisible() ? companionWindow.hide() : showCompanionWindow());
   tray.on('right-click', () => tray?.popUpContextMenu(buildCompanionMenu()));
 }
@@ -206,11 +273,15 @@ function createCompanionWindow() {
   companionWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   companionWindow.webContents.on('console-message', (_event, details, legacyMessage) => {
     const message = typeof details === 'object' ? details.message : legacyMessage;
-    const match = typeof message === 'string' && message.match(/^\[voice-(timing|error)\] (.*)$/);
+    const match = typeof message === 'string' && message.match(/^\[voice-(timing|error|trace)\] (.*)$/);
     if (!match) return;
     try {
       const value = JSON.parse(match[2]);
       const record = { at: new Date().toISOString(), kind: match[1], stage: String(value.stage || '').replace(/[^a-z-]/g, '').slice(0, 48), ms: Number.isFinite(value.ms) ? value.ms : undefined, code: String(value.code || '').replace(/[^A-Za-z]/g, '').slice(0, 32) };
+      if (match[1] === 'trace') {
+        if (value.schema !== 1 || !/^[0-9a-f-]{36}$/i.test(value.sessionId) || !/^[0-9a-f-]{36}$/i.test(value.turnId) || !Number.isSafeInteger(value.sequence) || value.sequence < 1) return;
+        Object.assign(record, { schema: 1, sessionId: value.sessionId, turnId: value.turnId, sequence: value.sequence });
+      }
       const directory = path.join(persistentDataDirectory, 'logs');
       fs.mkdirSync(directory, { recursive: true });
       const target = path.join(directory, 'voice.jsonl');
@@ -237,11 +308,20 @@ function createCompanionWindow() {
 function showCompanionWindow() {
   const win = createCompanionWindow();
   win.showInactive();
+  return win;
 }
 
-function applyCompanionConfig(changes) {
+function applyCompanionConfig(changes, { reconcile = true } = {}) {
+  if (nativeVoiceManaged) require('./native-voice-settings-validation.cjs').validateNativeVoiceChanges(changes);
   const config = { ...readCompanionConfig(), ...sanitizeCompanionChanges(changes) };
+  Object.assign(config, require('./companion-voice-update.cjs').restoredVoiceFlags(config,nativeVoiceManaged));
+  if (nativeVoiceManaged) {
+    try { require('./native-wake-keywords.cjs').wakeDefinition(config); }
+    catch { throw Error('唤醒词未保存：请使用2–12个汉字或字母E。'); }
+    voicePreferenceHistory.beforeSave(readCompanionConfig(),config);
+  }
   saveCompanionConfig(config);
+  if(nativeVoiceManaged&&(config.voiceEnabled===false||config.mockMode))setCompanionState('idle');
   app.setLoginItemSettings({ openAtLogin: config.launchAtStartup, openAsHidden: false });
   if (companionWindow) {
     const bounds = companionWindowSize(config);
@@ -249,22 +329,229 @@ function applyCompanionConfig(changes) {
     companionWindow.setBounds({ ...position, ...bounds });
     companionWindow.setOpacity(config.opacity);
     companionWindow.setAlwaysOnTop(config.alwaysOnTop, config.alwaysOnTop ? 'floating' : 'normal');
-    companionWindow.webContents.send('companion:config-changed', config);
+    companionWindow.webContents.send('companion:config-changed', { ...config, nativeVoiceManaged, nativeVoiceError, deviceId: voiceClientId });
     if (config.enabled) companionWindow.showInactive(); else companionWindow.hide();
   } else if (config.enabled && app.isReady()) {
     showCompanionWindow();
   }
-  return config;
+  if (reconcile && nativeVoiceHost) void nativeVoiceHost.reconcile().catch(() => setCompanionState('idle'));
+  mainWindow?.webContents.send('companion:config-changed', { ...config, nativeVoiceManaged, nativeVoiceError, deviceId: voiceClientId });
+  return { ...config, nativeVoiceManaged, nativeVoiceError, deviceId: voiceClientId };
 }
 
-ipcMain.handle('companion:get-config', () => readCompanionConfig());
-ipcMain.handle('companion:update-config', (_event, changes) => applyCompanionConfig(changes));
+ipcMain.handle('companion:get-config', () => ({ ...readCompanionConfig(), nativeVoiceManaged, nativeVoiceError, nativeVoiceStarting:Boolean(nativeVoiceStarting), deviceId: voiceClientId }));
+function assertVoiceSettingsSender(event) {
+  const reason = require('./voice-settings-sender.cjs').voiceSettingsSenderFailure(event, mainWindow, appPort);
+  if (reason) {
+    // Keep the diagnostic local. It contains no settings values, URLs, or keys.
+    try { fs.appendFileSync(path.join(persistentDataDirectory, 'voice-settings-denials.log'), `${new Date().toISOString()} ${reason} sender=${Number.isSafeInteger(event?.sender?.id) ? event.sender.id : '-'} main=${Number.isSafeInteger(mainWindow?.webContents?.id) ? mainWindow.webContents.id : '-'} frame=${Number.isSafeInteger(event?.senderFrame?.frameTreeNodeId) ? event.senderFrame.frameTreeNodeId : '-'} mainFrame=${Number.isSafeInteger(mainWindow?.webContents?.mainFrame?.frameTreeNodeId) ? mainWindow.webContents.mainFrame.frameTreeNodeId : '-'}\n`); } catch {}
+    throw Error('VOICE_SETTINGS_NOT_ALLOWED');
+  }
+}
+ipcMain.handle('companion:native-control', require('./native-voice-control.cjs').createNativeVoiceControlHandler({
+  windows:()=>[mainWindow,companionWindow],port:()=>appPort,host:()=>nativeVoiceHost
+}));
+const cameraFrames=require('./camera-frame-bridge.cjs').createCameraFrameBridge({ipcMain,window:()=>createCompanionWindow(),enabled:()=>readCompanionConfig().cameraContextEnabled===true,port:()=>appPort});
+ipcMain.handle('companion:request-camera-frame',async(event,question)=>{
+  assertVoiceSettingsSender(event);
+  if(typeof question!=='string'||question.length>20000)return null;
+  const {wantsCameraObservation}=await import(pathToFileURL(path.join(app.getAppPath(),'build/server/domain/interaction/vision-request.js')).href);
+  return wantsCameraObservation(question)?cameraFrames.capture():null;
+});
+const nativeVoiceDevices = (nativeVoiceConfigFile || nativeVoiceBundleRoot) ? require('./native-voice-device-settings.cjs').createNativeVoiceDeviceSettings({
+  dataDirectory:persistentDataDirectory,
+  systemDefaults:true,
+  failure:()=>nativeVoiceError || (readCompanionConfig().mockMode ? '语音设备已保存，请先关闭设备模拟再启用语音。' : '语音设备已保存，请先启用语音后重新连接。'),
+  fallback:()=>nativeVoiceConfigFile ? JSON.parse(fs.readFileSync(nativeVoiceConfigFile,'utf8')) : {inputName:'',outputName:''},
+  enumerate:async()=>{
+    const bundle=!nativeVoiceConfigFile ? await require('./native-voice-bundle.cjs').verifyNativeVoiceBundle(nativeVoiceBundleRoot) : null;
+    return require('./native-voice-runtime-check.cjs').listNativeVoiceDevices({appRoot:bundle?.workerRoot || nativeVoiceWorkerRoot,python:bundle?.python || JSON.parse(fs.readFileSync(nativeVoiceConfigFile,'utf8')).python});
+  },
+  async apply() {
+    await nativeVoiceStarting;
+    if(isQuitting)return false;
+    const old=nativeVoiceHost;nativeVoiceHost=null;
+    nativeVoiceStarting=(async()=>{await old?.close();if(!isQuitting)await initializeNativeVoiceHost();})().finally(()=>{nativeVoiceStarting=null;publishNativeVoiceStatus();});
+    await nativeVoiceStarting;
+    const config=readCompanionConfig();
+    return Boolean(nativeVoiceHost&&!nativeVoiceError&&config.voiceEnabled&&!config.mockMode);
+  }
+}) : null;
+ipcMain.handle('companion:list-native-devices',async event=>{assertVoiceSettingsSender(event);if(!nativeVoiceDevices)throw Error('原生语音尚未启用。');try{return await nativeVoiceDevices.list();}catch(error){throw require('./voice-device-error.cjs').voiceDeviceError(error);}});
+ipcMain.handle('companion:save-native-devices',async(event,value)=>{assertVoiceSettingsSender(event);if(!nativeVoiceDevices)throw Error('原生语音尚未启用。');try{return await nativeVoiceDevices.save(value);}catch(error){throw require('./voice-device-error.cjs').voiceDeviceError(error);}});
+ipcMain.handle('companion:voice-engine-status',event=>{assertVoiceSettingsSender(event);return voiceEngineSelection.inspect();});
+ipcMain.handle('companion:save-voice-engine',async(event,engine)=>{assertVoiceSettingsSender(event);try{return await voiceEngineSelection.save(engine)}catch(error){throw Error(require('./voice-engine-selection.cjs').voiceEngineSelectionError(error))}});
+ipcMain.handle('companion:restart-for-voice-engine',async event=>{
+  assertVoiceSettingsSender(event);
+  if (!voiceEngineSelection.status().restartRequired || isQuitting) return false;
+  if (voiceEngineSelection.status().requested === 'native') {
+    const devices = await nativeVoiceDevices?.list();
+    if (!devices || !devices.inputs.some(device => device.available && device.name === devices.selected.inputName) || !devices.outputs.some(device => device.available && device.name === devices.selected.outputName)) throw Error('请先在设备与状态中选择可用的麦克风和扬声器。');
+    const response = await fetch(`http://127.0.0.1:${appPort}/api/settings`, { signal: AbortSignal.timeout(8_000) });
+    if (!response.ok) throw Error('暂时无法检查语音模型连接，请确认服务器可用后重试。');
+    const settings = await response.json();
+    require('./companion-voice-update.cjs').assertNativeVoiceConnectionReady(settings, () => voiceSecrets.status());
+  }
+  // Register relaunch only after preflight succeeds. Window close normally
+  // hides this tray application, so the explicit quit below is required.
+  try { app.relaunch(); }
+  catch { throw Error('客户端重启未能启动，请从托盘菜单退出后重新打开。'); }
+  isQuitting = true;
+  setImmediate(() => app.quit());
+  return true;
+});
+ipcMain.handle('companion:voice-preference-history',event=>{assertVoiceSettingsSender(event);return voicePreferenceHistory.list();});
+ipcMain.handle('companion:voice-preference-version',(event,id)=>{assertVoiceSettingsSender(event);return voicePreferenceHistory.get(id);});
+ipcMain.handle('companion:default-voice-preferences',event=>{assertVoiceSettingsSender(event);return require('./voice-preference-transfer.cjs').defaultPreferences();});
+ipcMain.handle('companion:export-voice-preferences',event=>{assertVoiceSettingsSender(event);return require('./voice-preference-transfer.cjs').exportPreferences(readCompanionConfig());});
+ipcMain.handle('companion:preview-voice-preferences',(event,text)=>{assertVoiceSettingsSender(event);return require('./voice-preference-transfer.cjs').previewPreferences(text);});
+ipcMain.handle('companion:import-voice-preferences',(event,text)=>{assertVoiceSettingsSender(event);if(!nativeVoiceManaged)throw Error('请先切换到原生语音，再导入偏好。');return applyCompanionConfig(require('./voice-preference-transfer.cjs').parsePreferences(text));});
+ipcMain.handle('companion:preview-native-voice',event=>{assertVoiceSettingsSender(event);return nativeVoiceHost?.control('preview') ?? false;});
+ipcMain.handle('companion:clear-voice-latency',async event=>{assertVoiceSettingsSender(event);if(!nativeVoiceHost)throw Error('原生语音尚未就绪，暂时无法清除耗时记录。');await nativeVoiceHost.clearTiming();return {available:true,turns:require('./voice-latency-report.cjs').voiceLatencyReport(nativeVoiceHost.timingStatus())};});
+ipcMain.handle('companion:voice-latency',event=>{assertVoiceSettingsSender(event);return {available:Boolean(nativeVoiceHost),turns:require('./voice-latency-report.cjs').voiceLatencyReport(nativeVoiceHost?.timingStatus() ?? [])};});
+ipcMain.handle('companion:voice-key-status', event => { assertVoiceSettingsSender(event); return voiceSecrets.status(); });
+ipcMain.handle('companion:voice-key-revisions', event => { assertVoiceSettingsSender(event); return voiceSecrets.revisions(); });
+ipcMain.handle('companion:begin-voice-connection-save', async event => {
+  assertVoiceSettingsSender(event);
+  if (!nativeVoiceManaged) return null;
+  if (voiceConnectionHold) throw Error('另一项语音连接正在保存，请稍后重试。');
+  if (nativeVoiceStarting) await nativeVoiceStarting;
+  const token = randomUUID();
+  // Every turn opened during the two-store update reads the last complete
+  // parameter/credential pair. The renderer releases this hold in finally.
+  const timer = setTimeout(() => {
+    if (voiceConnectionHold?.token !== token) return;
+    // A renderer may close midway through the two-store save. Stop listening
+    // rather than silently resume with a potentially incomplete pair.
+    nativeVoiceError = '语音连接保存超时，语音已暂停；请核对连接后重新开启。';
+    applyCompanionConfig({ voiceEnabled: false }, { reconcile: false });
+    void nativeVoiceHost?.reconcile().catch(() => undefined);
+    voiceConnectionHold = null;
+  }, 90_000);
+  timer.unref?.();
+  voiceConnectionHold = { token, senderId: event.sender.id, snapshot: nativeVoiceHost?.connectionSnapshot() ?? null, timer };
+  return token;
+});
+ipcMain.handle('companion:end-voice-connection-save', async (event, token) => {
+  assertVoiceSettingsSender(event);
+  if (!voiceConnectionHold || voiceConnectionHold.token !== token || voiceConnectionHold.senderId !== event.sender.id) throw Error('语音连接保存状态已失效。');
+  clearTimeout(voiceConnectionHold.timer);
+  const previousLocation = voiceConnectionHold.snapshot?.settings?.speechExecution ?? 'cloud';
+  voiceConnectionHold = null;
+  if (nativeVoiceManaged) {
+    const {SettingsService} = await import(pathToFileURL(path.join(app.getAppPath(), 'build/server/domain/settings/settings-service.js')).href);
+    const nextLocation = new SettingsService().nativeVoiceConnection().speechExecution ?? 'cloud';
+    if (nextLocation !== previousLocation) {
+      const previous = nativeVoiceHost; nativeVoiceHost = null;
+      await previous?.close();
+      await startNativeVoiceHost();
+    }
+  }
+  return true;
+});
+ipcMain.handle('companion:voice-runtime-status', event => {
+  assertVoiceSettingsSender(event);
+  const config = readCompanionConfig();
+  return { engine: voiceEngineSelection.current, enabled: config.voiceEnabled !== false, starting:Boolean(nativeVoiceStarting), running: nativeVoiceManaged ? Boolean(nativeVoiceHost?.status().running) : null, error: nativeVoiceError || null };
+});
+ipcMain.handle('companion:test-native-voice-connection', async (event, draft) => {
+  assertVoiceSettingsSender(event);
+  if (!draft || !['recognition', 'synthesis'].includes(draft.purpose) || typeof draft.url !== 'string' || typeof draft.model !== 'string' || draft.url.length > 500 || draft.model.length > 160 || typeof draft.key !== 'string' || draft.key.length > 4096 || typeof draft.voice !== 'string' || draft.voice.length > 160) throw Error('语音连接草稿不完整。');
+  const apiKey = draft.key.trim() || voiceSecrets.load(draft.purpose);
+  if (!apiKey) throw Error('当前电脑缺少这项语音服务的密钥。');
+  const provider = await import(pathToFileURL(path.join(app.getAppPath(), 'build/server/providers', draft.purpose === 'recognition' ? 'qwen-realtime-asr.js' : 'qwen-realtime-tts.js')).href);
+  const signal = AbortSignal.timeout(10_000);
+  const session = draft.purpose === 'recognition'
+    ? provider.createQwenRealtimeAsr({ baseUrl: draft.url.trim(), model: draft.model.trim(), apiKey, signal })
+    : provider.createQwenRealtimeTts({ baseUrl: draft.url.trim(), model: draft.model.trim(), voice: draft.voice.trim(), apiKey, signal });
+  try {
+    await session.ready;
+    return { connected: true, stage: 'authenticated-session', detail: '草稿已通过实时服务认证握手；尚未验证录音转写或扬声器听音。' };
+  } finally { session.cancel(); }
+});
+ipcMain.handle('companion:set-voice-enabled', async (event, enabled) => {
+  assertVoiceSettingsSender(event);
+  if (typeof enabled !== 'boolean') throw Error('语音开关值无效。');
+  if (enabled && voiceConnectionHold) throw Error('语音连接正在保存，完成后再开启语音。');
+  const previousConfig = readCompanionConfig();
+  if (enabled && nativeVoiceManaged) {
+    const {SettingsService}=await import(pathToFileURL(path.join(app.getAppPath(),'build/server/domain/settings/settings-service.js')).href);
+    if(require('./companion-voice-update.cjs').needsCloudVoiceKeys(new SettingsService().nativeVoiceConnection())){
+      const status=voiceSecrets.status();
+      if(status.recognition!=='configured'||status.synthesis!=='configured')throw Error('请先在模型连接中配置当前电脑的语音识别和合成密钥。');
+    }
+    const devices = await nativeVoiceDevices?.list();
+    if (!devices || !devices.inputs.some(device => device.available && device.name === devices.selected.inputName) || !devices.outputs.some(device => device.available && device.name === devices.selected.outputName)) throw Error('选中的麦克风或扬声器不可用，请先在设备与状态中重新选择。');
+  }
+  applyCompanionConfig({ voiceEnabled: enabled, ...(enabled && nativeVoiceManaged ? { mockMode: false } : {}) }, { reconcile: false });
+  if(!enabled)voiceStartupRestore.cancel();
+  try {
+    if (nativeVoiceManaged && enabled && !nativeVoiceHost) await startNativeVoiceHost();
+    if (nativeVoiceManaged) {
+      await nativeVoiceHost?.reconcile();
+      if (enabled && !nativeVoiceHost?.status().running) throw Error(nativeVoiceError || '语音进程未能启动。');
+      if (enabled) nativeVoiceError = null;
+    }
+    publishNativeVoiceStatus();
+    const currentConfig=readCompanionConfig();
+    return { enabled: currentConfig.voiceEnabled, mockMode:currentConfig.mockMode, running: nativeVoiceManaged ? Boolean(nativeVoiceHost?.status().running) : Boolean(enabled && !currentConfig.mockMode && currentConfig.enabled) };
+  } catch (error) {
+    applyCompanionConfig({ voiceEnabled: previousConfig.voiceEnabled, mockMode: previousConfig.mockMode }, { reconcile: false });
+    await nativeVoiceHost?.reconcile().catch(() => undefined);
+    throw error;
+  }
+});
+ipcMain.handle('companion:save-voice-key', async (event, purpose, value) => {
+  assertVoiceSettingsSender(event);
+  // Persisting a credential is separate from enabling voice. Starting the
+  // host here could fail after the key was written and misreport the save.
+  return voiceSecrets.save(purpose, value);
+});
+ipcMain.handle('companion:update-config', async (event, changes) => {
+  assertVoiceSettingsSender(event);
+  changes=require('./companion-voice-update.cjs').nativeCompanionSettingsChanges(changes,nativeVoiceManaged);
+  const before = readCompanionConfig();
+  const reconnectFields = ['wakeWord', 'wakeWordThreshold', 'wakeWordEnabled', 'voiceNoiseSuppression', 'voiceAutoGain', 'voiceEchoDelayMs'];
+  const reconnect = nativeVoiceManaged && reconnectFields.some(field => changes?.[field] !== undefined && changes[field] !== before[field]);
+  const next = applyCompanionConfig(changes, { reconcile: false });
+  if (!require('./companion-voice-update.cjs').requiresVoiceReconcile(before, next)) return next;
+  if (!reconnect) {
+    try { await nativeVoiceHost?.reconcile(); return next; }
+    catch (error) {
+      applyCompanionConfig(before, { reconcile: false });
+      await nativeVoiceHost?.reconcile().catch(() => undefined);
+      throw Error(`设置未应用，已恢复原设置：${error instanceof Error ? error.message : '请检查语音服务。'}`);
+    }
+  }
+  if (!nativeVoiceHost || !next.voiceEnabled || next.mockMode) return next;
+  try {
+    await nativeVoiceStarting;
+    const old = nativeVoiceHost; nativeVoiceHost = null;
+    await old.close();
+    await startNativeVoiceHost();
+    if (!nativeVoiceHost || nativeVoiceError) throw Error(nativeVoiceError || '语音重新连接失败。');
+    return { ...readCompanionConfig(), nativeVoiceManaged, nativeVoiceError, deviceId: voiceClientId };
+  } catch (error) {
+    // A failed reconnect must not claim that the new preference is active.
+    applyCompanionConfig(Object.fromEntries(reconnectFields.map(field => [field, before[field]])), { reconcile: false });
+    if (!nativeVoiceHost) await startNativeVoiceHost().catch(() => undefined);
+    throw Error(`语音未重新连接，已恢复原设置：${error instanceof Error ? error.message : '请检查设备和语音资源。'}`);
+  }
+});
 ipcMain.handle('companion:get-state', () => companionState);
 ipcMain.handle('companion:set-state', (_event, state) => setCompanionState(state));
 ipcMain.handle('companion:get-device-status', () => ({ microphone: 'pending', camera: 'pending', mode: 'mock', microphones: [], cameras: [] }));
 ipcMain.handle('companion:show', () => { showCompanionWindow(); });
 ipcMain.handle('companion:hide', () => { companionWindow?.hide(); });
 ipcMain.handle('companion:open-main', (_event, target) => { showMainWindow(target); });
+ipcMain.handle('computer:status',event=>{assertVoiceSettingsSender(event);return computerBridgeHost?.status()??{connected:false,active:false,error:'',deviceId:voiceClientId};});
+ipcMain.handle('computer:connect',async event=>{assertVoiceSettingsSender(event);return localComputerHost().connect();});
+ipcMain.handle('computer:disconnect',async event=>{assertVoiceSettingsSender(event);computerStartupRestore.cancel();return localComputerHost().disconnect();});
+ipcMain.handle('assistant:set-focus',(event,target)=>{
+  assertVoiceSettingsSender(event);
+  if(!target||!['project','document','task','page'].includes(target.kind)||typeof target.id!=='string'||target.id.length>160||typeof target.title!=='string'||target.title.length>500)throw Error('当前页面信息无效。');
+  interactionFocus={kind:target.kind,id:target.id,title:target.title};return {updated:true};
+});
 ipcMain.handle('companion:show-context-menu', () => { buildCompanionMenu().popup({ window: companionWindow ?? undefined }); });
 ipcMain.handle('companion:list-voices', () => runSpeechScript('list-speech-voices.ps1'));
 ipcMain.handle('companion:recognize-speech', async () => {
@@ -323,7 +610,7 @@ async function installLatestUpdate() {
     const digest = createHash('sha256').update(packageBytes).digest('hex');
     if (digest.toLowerCase() !== String(release.sha256).toLowerCase()) throw new Error('安装包校验失败，已停止更新。');
 
-    const updateDirectory = path.join(app.getPath('temp'), 'AI-Secretary-Updates');
+    const updateDirectory = path.join(app.getPath('temp'), 'Housekeeper-Updates');
     fs.mkdirSync(updateDirectory, { recursive: true });
     const installerPath = path.join(updateDirectory, path.basename(release.filename));
     fs.writeFileSync(installerPath, packageBytes);
@@ -357,12 +644,12 @@ ipcMain.handle('app:install-latest-update', installLatestUpdate);
 
 function showPreviousUpdateFailure() {
   try {
-    const statusPath = path.join(app.getPath('temp'), 'AI-Secretary-Updates', 'status.json');
+    const statusPath = path.join(app.getPath('temp'), 'Housekeeper-Updates', 'status.json');
     if (!fs.existsSync(statusPath)) return;
     const status = JSON.parse(fs.readFileSync(statusPath, 'utf8'));
     if (status?.state !== 'error') return;
     fs.rmSync(statusPath, { force: true });
-    dialog.showErrorBox('AI 秘书更新失败', `安装程序未能完成更新。应用已恢复启动，原有数据不会受影响。\n\n原因：${String(status.message || '未知错误')}\n\n请把更新日志发给维护人员：\n${path.join(app.getPath('temp'), 'AI-Secretary-Updates', 'update.log')}`);
+    dialog.showErrorBox('AI 秘书更新失败', `安装程序未能完成更新。应用已恢复启动，原有数据不会受影响。\n\n原因：${String(status.message || '未知错误')}\n\n请把更新日志发给维护人员：\n${path.join(app.getPath('temp'), 'Housekeeper-Updates', 'update.log')}`);
   } catch (error) {
     writeStartupError(error);
   }
@@ -411,12 +698,21 @@ async function readEncryptedValueWithRetry(filePath) {
 }
 
 async function configureLocalData() {
-  // Public edition is standalone by default, with an independent data profile.
-  process.env.AI_SECRETARY_CLIENT_MODE = '0';
+  require('./companion-voice-update.cjs').migrateNativeVoiceFlags(companionConfigPath,nativeVoiceManaged);
+  // The desktop build is a thin client. It may keep device configuration and
+  // scan the local Vault for upload, but business features must never fall
+  // back to the local database when the central server is unavailable.
+  process.env.AI_SECRETARY_CLIENT_MODE = '1';
   const localDataDirectory = path.join(persistentDataDirectory, 'data');
   const secretPath = path.join(persistentDataDirectory, 'api-key.secure');
   const retrievalSecretPath = path.join(persistentDataDirectory, 'retrieval-api-key.secure');
   const webSearchSecretPath = path.join(persistentDataDirectory, 'tavily-api-key.secure');
+  const visionSecretPath = path.join(persistentDataDirectory, 'vision-api-key.secure');
+  global.__AI_SECRETARY_VISION_SECRET_STORE__ = {
+    load(){if(!safeStorage.isEncryptionAvailable()||!fs.existsSync(visionSecretPath))return null;try{return safeStorage.decryptString(fs.readFileSync(visionSecretPath));}catch{return null;}},
+    save(value){if(!safeStorage.isEncryptionAvailable())throw new Error('当前系统无法使用安全存储。');fs.mkdirSync(path.dirname(visionSecretPath),{recursive:true});fs.writeFileSync(visionSecretPath,safeStorage.encryptString(value));},
+    clear(){if(fs.existsSync(visionSecretPath))fs.unlinkSync(visionSecretPath);}
+  };
   const remoteUrlPath = path.join(persistentDataDirectory, 'remote-server-url.txt');
   const remoteTokenPath = path.join(persistentDataDirectory, 'remote-server-token.secure');
   global.__AI_SECRETARY_SECRET_STORE__ = {
@@ -475,7 +771,6 @@ async function configureLocalData() {
   // prevent a tailnet-only client from starting and reaching that service.
   const savedRemoteToken = requestedRemoteToken || await readEncryptedValueWithRetry(remoteTokenPath);
   if (savedRemoteUrl) {
-    process.env.AI_SECRETARY_CLIENT_MODE = '1';
     process.env.AI_SECRETARY_REMOTE_URL = savedRemoteUrl;
     if (savedRemoteToken) process.env.AI_SECRETARY_REMOTE_TOKEN = savedRemoteToken;
     else delete process.env.AI_SECRETARY_REMOTE_TOKEN;
@@ -507,15 +802,87 @@ async function startLocalService() {
   await waitForLocalService();
 }
 
-function createMainWindow() {
-  mainWindow = new BrowserWindow({
+const {createStartupRestore}=require('./startup-restore.cjs');
+const voiceStartupRestore=createStartupRestore({
+  enabled:()=>{const c=readCompanionConfig();return !isQuitting&&nativeVoiceManaged&&c.voiceEnabled!==false&&!c.mockMode;},
+  async start(){
+    if(nativeVoiceHost)await nativeVoiceHost.reconcile();else await startNativeVoiceHost();
+    return Boolean(nativeVoiceHost?.status().running);
+  }
+});
+const computerStartupRestore=createStartupRestore({
+  enabled:()=>!isQuitting&&require('./computer-bridge-host.cjs').computerAutoConnect(persistentDataDirectory),
+  async start(){return (await localComputerHost().restore()).connected;}
+});
+function restoreDesktopConnections(){
+  void voiceStartupRestore.restore();
+  void computerStartupRestore.restore();
+}
+function publishNativeVoiceStatus(){
+  const config={...readCompanionConfig(),nativeVoiceManaged,nativeVoiceError,nativeVoiceStarting:Boolean(nativeVoiceStarting),deviceId:voiceClientId};
+  for(const window of [mainWindow,companionWindow])if(window&&!window.isDestroyed())window.webContents.send('companion:config-changed',config);
+}
+function startNativeVoiceHost() {
+  if (!nativeVoiceStarting){
+    nativeVoiceStarting = initializeNativeVoiceHost().finally(() => { nativeVoiceStarting = null;publishNativeVoiceStatus(); });
+    publishNativeVoiceStatus();
+  }
+  return nativeVoiceStarting;
+}
+
+async function initializeNativeVoiceHost() {
+  if (!nativeVoiceManaged) return;
+  const { createNativeVoiceHost } = require('./native-voice-host.cjs');
+  const { startNativeVoiceSafely } = require('./native-voice-startup.cjs');
+  const { SettingsService } = await import(pathToFileURL(path.join(app.getAppPath(), 'build/server/domain/settings/settings-service.js')).href);
+  const nativeSettings = new SettingsService();
+  const trace = require('./voice-startup-trace.cjs').createVoiceStartupTrace(path.join(persistentDataDirectory, 'logs/native-voice-startup.json'));
+  trace.mark('settings');
+  const result = await startNativeVoiceSafely(async () => {
+    // The local API bridge mirrors the central connection into this device's
+    // settings before the native worker reads it. A failed refresh must not
+    // silently start with an unrelated, possibly stale SQLite value.
+    try {
+      const response = await fetch(`http://127.0.0.1:${appPort}/api/settings`, { signal: AbortSignal.timeout(8_000) });
+      if (!response.ok) throw Error('VOICE_SETTINGS_SYNC_FAILED');
+      await response.body?.cancel();
+    } catch { throw Error('VOICE_SETTINGS_SYNC_FAILED'); }
+    return createNativeVoiceHost({ configFile: nativeVoiceConfigFile, resourceBundleRoot: activeVoiceBundleRoot || undefined, appRoot: app.getAppPath(), workerRoot: nativeVoiceWorkerRoot,
+    dataDirectory: persistentDataDirectory, deviceId: voiceClientId, port: appPort, readCompanionConfig, readDevices:()=>nativeVoiceDevices.read(),onStartupStage:trace.mark,onNavigation:receiveNavigation,onActivity:event=>mainWindow?.webContents.send('assistant:voice-activity',event),onComputerControl:action=>action==='connect'?localComputerHost().connect():localComputerHost().disconnect(),
+    captureCameraFrame:signal=>cameraFrames.capture(signal),
+    onPlaybackLevel:level=>mainWindow?.webContents.send('companion:playback-level',level),
+    readConnection: () => voiceConnectionHold?.snapshot?.settings ?? nativeSettings.nativeVoiceConnection(),
+    key: purpose => voiceConnectionHold?.snapshot?.keys[purpose] ?? voiceSecrets.load(purpose) ?? null,
+    onStatus: event => {
+      const previousError = nativeVoiceError;
+      nativeVoiceError = voiceStatusMessage(nativeVoiceError,event);
+      setCompanionState(voiceStatusState(event));
+      if (previousError !== nativeVoiceError) {
+        publishNativeVoiceStatus();
+      }
+    }
+    });
+  }, { onFailure: ({code}) => trace.finish('failed', code) });
+  if(result.host)trace.finish(result.host.status().running?'ready':'paused');
+  if(isQuitting){await result.host?.close();return;}
+  nativeVoiceHost = result.host; nativeVoiceError = result.error;
+  publishNativeVoiceStatus();
+  if (nativeVoiceError) setCompanionState('idle');
+}
+
+// Inline the local stylesheet so the first screen needs no server or network.
+const startupHtml = fs.readFileSync(path.join(__dirname, 'startup.html'), 'utf8').replace('<link rel="stylesheet" href="./startup.css">', `<style>${fs.readFileSync(path.join(__dirname, 'startup.css'), 'utf8')}</style>`);
+const startupPage = `data:text/html;charset=utf-8,${encodeURIComponent(startupHtml)}`;
+function createMainWindow({ loading = false } = {}) {
+  if (mainWindow && !mainWindow.isDestroyed()) return mainWindow;
+  const window = new BrowserWindow({
     width: 1440,
     height: 900,
     minWidth: 960,
     minHeight: 640,
     show: false,
-    backgroundColor: '#f7f8fa',
-    title: 'AI 秘书',
+    backgroundColor: '#f2f3f7',
+    title: displayName,
     icon: path.join(__dirname, 'assets', 'icon.ico'),
     autoHideMenuBar: true,
     webPreferences: {
@@ -526,20 +893,27 @@ function createMainWindow() {
     }
   });
 
-  mainWindow.setMenu(null);
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+  mainWindow = window;
+  window.setMenu(null);
+  window.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:/i.test(url)) void shell.openExternal(url);
     return { action: 'deny' };
   });
-  mainWindow.once('ready-to-show', () => mainWindow?.show());
-  mainWindow.on('close', (event) => {
+  window.once('ready-to-show', () => { if (!window.isDestroyed()) window.show(); });
+  window.on('close', (event) => {
+    if (!localServiceReady && !isQuitting) {
+      isQuitting = true;
+      app.quit();
+      return;
+    }
     if (!isQuitting && readCompanionConfig().enabled) {
       event.preventDefault();
-      mainWindow?.hide();
+      window.hide();
     }
   });
-  mainWindow.on('closed', () => { mainWindow = null; });
-  void mainWindow.loadURL(`http://127.0.0.1:${appPort}/`);
+  window.on('closed', () => { if (mainWindow === window) mainWindow = null; });
+  void window.loadURL(loading ? startupPage : `http://127.0.0.1:${appPort}/`);
+  return window;
 }
 
 function isPortAvailable(port) {
@@ -578,27 +952,38 @@ if (!ownsSingleInstanceLock) {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.show();
     mainWindow.focus();
-  } else if (app.isReady()) showMainWindow('chat');
+  } else if (localServiceReady) showMainWindow('chat');
 });
 
 if (ownsSingleInstanceLock) app.whenReady().then(async () => {
   try {
     configureMediaPermissions();
     showPreviousUpdateFailure();
+    createMainWindow({ loading: true });
     // Reuse only a current, connected bridge. A stale bridge left by an
     // interrupted upgrade must not make the new client appear disconnected or
     // serve the previous version's interface.
     const reuseExistingBridge = await selectLocalBridge();
+    if (isQuitting) return;
     if (reuseExistingBridge) {
-      createMainWindow();
+      if (nativeVoiceManaged) await configureLocalData();
+      if (isQuitting) return;
+      localServiceReady = true;
+      if (!mainWindow) createMainWindow();
+      else void mainWindow.loadURL(`http://127.0.0.1:${appPort}/`);
       createTray();
       if (readCompanionConfig().enabled) createCompanionWindow();
+      restoreDesktopConnections();
       return;
     }
     await startLocalService();
-    createMainWindow();
+    if (isQuitting) return;
+    localServiceReady = true;
+    if (!mainWindow) createMainWindow();
+    else void mainWindow.loadURL(`http://127.0.0.1:${appPort}/`);
     createTray();
     if (readCompanionConfig().enabled) createCompanionWindow();
+    restoreDesktopConnections();
   } catch (error) {
     writeStartupError(error);
     dialog.showErrorBox('AI 秘书无法启动', error instanceof Error ? error.message : '本地服务启动失败。');
@@ -610,4 +995,13 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin' && isQuitting) app.quit();
 });
 
-app.on('before-quit', () => { isQuitting = true; });
+app.on('before-quit', event => {
+  isQuitting = true;
+  voiceStartupRestore.close();computerStartupRestore.close();
+  if(computerBridgeHost){event.preventDefault();const host=computerBridgeHost;computerBridgeHost=null;void host.close().catch(()=>{}).finally(()=>app.quit());return;}
+  if(nativeVoiceStarting){event.preventDefault();void nativeVoiceStarting.catch(()=>{}).finally(()=>app.quit());return;}
+  if (nativeVoiceHost) {
+    event.preventDefault(); const host = nativeVoiceHost; nativeVoiceHost = null;
+    void host.close().catch(() => {}).finally(() => app.quit());
+  }
+});

@@ -65,6 +65,34 @@ test('transcribeAudio sends a DashScope multimodal request and reads the transcr
     assert.equal(JSON.parse(requestBody).model, settings.speechRecognitionModel);
   } finally { globalThis.fetch = originalFetch; }
 });
+test('compatibility recognition and synthesis use their independently saved URLs', async () => {
+  const originalFetch = globalThis.fetch;
+  const called: string[] = [];
+  globalThis.fetch = (async input => {
+    called.push(String(input));
+    if (called.length === 1) return new Response(JSON.stringify({ output: { output: { sentence: { text: '收到' } } } }), { status: 200 });
+    if (called.length === 2) return new Response(JSON.stringify({ output: { audio: { url: 'https://audio.example/test.wav' } } }), { status: 200 });
+    return new Response(new Uint8Array([82, 73, 70, 70]), { status: 200, headers: { 'content-type': 'audio/wav' } });
+  }) as typeof fetch;
+  try {
+    const split = { ...settings, speechLegacyRecognitionBaseUrl: 'https://asr.cn-beijing.maas.aliyuncs.com/api/v1', speechLegacySynthesisBaseUrl: 'https://tts.cn-beijing.maas.aliyuncs.com/api/v1' };
+    await transcribeAudio(split, 'test-key', 'data:audio/wav;base64,YXVkaW8=');
+    await synthesizeSpeech(split, 'test-key', '你好');
+    assert.match(called[0], /^https:\/\/asr\.cn-beijing\.maas\.aliyuncs\.com\//);
+    assert.match(called[1], /^https:\/\/tts\.cn-beijing\.maas\.aliyuncs\.com\//);
+  } finally { globalThis.fetch = originalFetch; }
+});
+test('compatibility provider rejects lookalike service URLs before any request', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = (async () => { calls++; return new Response(); }) as typeof fetch;
+  try {
+    for (const url of ['http://dashscope.aliyuncs.com/api/v1', 'https://dashscope.aliyuncs.com.evil.example/api/v1', 'https://127.0.0.1/path/dashscope.aliyuncs.com/api/v1', 'https://dashscope.aliyuncs.com/api/v1?target=evil']) {
+      await assert.rejects(transcribeAudio({ ...settings, speechLegacyRecognitionBaseUrl: url }, 'test-key', 'data:audio/wav;base64,YXVkaW8='));
+    }
+    assert.equal(calls, 0);
+  } finally { globalThis.fetch = originalFetch; }
+});
 
 test('transcribeAudio accepts Electron MediaRecorder codec parameters', async () => {
   const originalFetch = globalThis.fetch;
@@ -84,5 +112,65 @@ test('synthesizeSpeech downloads the generated audio and returns a playable data
   }) as typeof fetch;
   try {
     assert.equal(await synthesizeSpeech(settings, 'test-key', '你好'), 'data:audio/wav;base64,UklGRg==');
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('cancelled synthesis does not start a request or download a late response', async () => {
+  const originalFetch = globalThis.fetch;
+  const controller = new AbortController();
+  let calls = 0;
+  try {
+    globalThis.fetch = (async () => {
+      calls++;
+      controller.abort();
+      return new Response(JSON.stringify({ output: { url: 'https://audio.example/late.wav' } }));
+    }) as typeof fetch;
+    await assert.rejects(synthesizeSpeech(settings, 'test', '你好', controller.signal), { name: 'AbortError' });
+    assert.equal(calls, 1);
+    await assert.rejects(synthesizeSpeech(settings, 'test', '你好', controller.signal), { name: 'AbortError' });
+    assert.equal(calls, 1);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('synthesis and download share cancellation through response body consumption', async () => {
+  const originalFetch = globalThis.fetch;
+  const controller = new AbortController();
+  const signals: AbortSignal[] = [];
+  try {
+    globalThis.fetch = (async (_url, init) => {
+      signals.push(init!.signal!);
+      if (signals.length === 1) return new Response(JSON.stringify({ output: { url: 'https://audio.example/test.wav' } }));
+      return {
+        ok: true,
+        arrayBuffer: async () => { controller.abort(); return new ArrayBuffer(4); }
+      } as Response;
+    }) as typeof fetch;
+    await assert.rejects(synthesizeSpeech(settings, 'test', '你好', controller.signal), { name: 'AbortError' });
+    assert.equal(signals.length, 2);
+    assert.equal(signals[0], signals[1]);
+    assert.equal(signals[1].aborted, true);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+
+test('download MIME aliases do not break a verified WAV synthesis-to-recognition round trip', async () => {
+  const originalFetch = globalThis.fetch;
+  const wav = new WaveFile(); wav.fromScratch(1, 16000, '16', [0, 200, -200, 0]);
+  try {
+    for (const mime of ['application/octet-stream', 'audio/x-wav', 'audio/wav; charset=binary']) {
+      let call = 0;
+      globalThis.fetch = (async (_url, init) => {
+        call++;
+        if (call === 1) return new Response(JSON.stringify({output:{audio:{url:'https://audio.example/test.wav'}}}));
+        if (call === 2) return new Response(new Uint8Array(wav.toBuffer()), {headers:{'content-type':mime}});
+        const data = JSON.parse(String(init?.body)).input.messages[0].content[0].input_audio.data;
+        assert.match(data, /^data:audio\/wav;base64,/);
+        assert.deepEqual(Buffer.from(data.split(',')[1], 'base64'), Buffer.from(wav.toBuffer()));
+        return new Response(JSON.stringify({output:{text:'fixed fixture'}}));
+      }) as typeof fetch;
+      const audio = await synthesizeSpeech(settings, 'fixture-key', 'fixed fixture');
+      assert.equal(await transcribeAudio(settings, 'fixture-key', audio), 'fixed fixture');
+      assert.equal(call, 3);
+    }
   } finally { globalThis.fetch = originalFetch; }
 });

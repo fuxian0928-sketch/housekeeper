@@ -11,7 +11,7 @@ export const VOICE_CONVERSATION_PROJECT_ID = 'system-voice-conversations';
 
 export function ensureVoiceConversationProject() {
   const timestamp = nowIso();
-  database.prepare(`INSERT OR IGNORE INTO projects (id, name, summary, status, priority, vault_path, source_path, created_at, updated_at) VALUES (?, '语音对话', '桌面小E产生的语音对话历史。与普通文字聊天分开保存，共用同一套长期记忆。', 'active', 'medium', 'central://documents', '', ?, ?)`).run(VOICE_CONVERSATION_PROJECT_ID, timestamp, timestamp);
+  database.prepare(`INSERT OR IGNORE INTO projects (id, name, summary, status, priority, vault_path, source_path, created_at, updated_at) VALUES (?, '语音对话', '桌面希微产生的语音对话历史。与普通文字聊天分开保存，共用同一套长期记忆。', 'active', 'medium', 'central://documents', '', ?, ?)`).run(VOICE_CONVERSATION_PROJECT_ID, timestamp, timestamp);
   database.prepare(`UPDATE projects SET name='语音对话', deleted_at=NULL WHERE id=?`).run(VOICE_CONVERSATION_PROJECT_ID);
   return VOICE_CONVERSATION_PROJECT_ID;
 }
@@ -77,7 +77,7 @@ export function confirmProjectSuggestions(items: unknown, vaultPath: string) {
 }
 
 export function trashProject(id: string, confirmationName: string) {
-  if (id === VOICE_CONVERSATION_PROJECT_ID) throw httpError('“语音对话”是桌面小E的常驻项目，不能移入回收站。', 400);
+  if (id === VOICE_CONVERSATION_PROJECT_ID) throw httpError('“语音对话”是桌面希微的常驻项目，不能移入回收站。', 400);
   const project = database.prepare(`SELECT id, name, deleted_at FROM projects WHERE id = ?`).get(id) as { id: string; name: string; deleted_at: string | null } | undefined;
   if (!project || project.deleted_at) throw httpError('项目不存在或已在回收站中。', 404);
   if (confirmationName.trim() !== project.name) throw httpError('项目名称不匹配，没有执行删除。', 400);

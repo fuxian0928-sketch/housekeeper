@@ -1,17 +1,14 @@
-import { StrictMode } from 'react';
+import { StrictMode, Suspense, lazy } from 'react';
 import { createRoot } from 'react-dom/client';
-import { App } from './App';
-import { DesktopCompanion } from './features/companion/DesktopCompanion';
-import './styles.css';
-import './polish.css';
-import './workspace.css';
-import './features/companion/companion.css';
-import './glass.css';
+import './app.css';
+import { StartupScreen } from './components/StartupScreen';
 
 const isCompanionSurface = new URLSearchParams(window.location.search).get('surface') === 'companion';
+if(isCompanionSurface)document.documentElement.dataset.surface='companion';
+const Surface=isCompanionSurface?lazy(()=>import('./features/companion/DesktopCompanion').then(module=>({default:module.DesktopCompanion}))):lazy(()=>import('./App').then(module=>({default:module.App})));
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    {isCompanionSurface ? <DesktopCompanion /> : <App />}
+    <Suspense fallback={isCompanionSurface?null:<StartupScreen/>}><Surface/></Suspense>
   </StrictMode>
 );

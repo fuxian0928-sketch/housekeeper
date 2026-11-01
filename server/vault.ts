@@ -1,3 +1,5 @@
+import {retrieveKnowledgeLocal} from './retrieval/rag-service.js';
+import {indexRagDocumentById} from './retrieval/rag-store.js';
 import { createHash } from 'node:crypto';
 import { access, readdir, readFile, stat } from 'node:fs/promises';
 import { join, normalize, relative, resolve } from 'node:path';
@@ -257,6 +259,7 @@ export async function scanKnowledgeBase(options: ScanOptions = {}): Promise<Scan
       const existingChunkState = existingDocument ? database.prepare('SELECT COUNT(*) AS count, MIN(chunking_version) AS version FROM knowledge_chunks WHERE document_id = ?').get(existingDocument.id) as { count: number; version: string | null } : { count: 0, version: null };
       const existingChunkCount = existingChunkState.count;
       if (existingDocument && existingDocument.bytes === fileStat.size && existingDocument.modified_at === fileStat.mtime.toISOString() && existingChunkCount > 0 && existingChunkState.version === 'markdown-ast-v3') {
+        indexRagDocumentById(existingDocument.id);
         result.indexed += 1;
         result.chunks += existingChunkCount;
         options.onProgress?.({
@@ -284,6 +287,7 @@ export async function scanKnowledgeBase(options: ScanOptions = {}): Promise<Scan
           const chunkId = createHash('sha256').update(`${documentId}:${position}:${chunk.content}`).digest('hex').slice(0, 24);
           insertChunk.run(chunkId, documentId, position, chunk.headingPath, chunk.content, JSON.stringify(vectorize(`${title}\n${chunk.headingPath}\n${chunk.content}`)), chunk.startLine, chunk.endLine, chunk.tokenCount, createHash('sha256').update(chunk.content).digest('hex'), JSON.stringify(chunk.metadata), indexedAt);
         });
+        indexRagDocumentById(documentId);
         database.exec('COMMIT');
       } catch (error) {
         database.exec('ROLLBACK');
@@ -325,23 +329,24 @@ export async function scanKnowledgeBase(options: ScanOptions = {}): Promise<Scan
   return result;
 }
 
-export function indexKnowledgeContent(input: { relativePath: string; content: string; modifiedAt: string; bytes?: number }) {
+export function indexKnowledgeContent(input: { relativePath: string; content: string; modifiedAt: string; bytes?: number; title?: string }) {
   const relativePath = normalizeRelativePath(input.relativePath);
   if (!relativePath || relativePath === '.' || !relativePath.toLowerCase().endsWith('.md')) throw new Error('只能索引有效的 Markdown 相对路径。');
   const content = input.content;
-  const title = content.match(headingPattern)?.[1]?.trim() || relativePath.split('/').at(-1)?.replace(/\.md$/i, '') || '未命名文档';
+  const title = input.title?.trim() || content.match(headingPattern)?.[1]?.trim() || relativePath.split('/').at(-1)?.replace(/\.md$/i, '') || '未命名文档';
   const excerpt = content.replace(/^---[\s\S]*?---\s*/m, '').replace(/^#{1,6}\s+/gm, '').replace(/[`*_>|\[\]]/g, '').replace(/\s+/g, ' ').trim().slice(0, 220);
   const indexedAt = nowIso();
-  const existing = database.prepare('SELECT id,content FROM knowledge_documents WHERE relative_path = ?').get(relativePath) as { id: string; content: string } | undefined;
+  const existing = database.prepare('SELECT id,content,title FROM knowledge_documents WHERE relative_path = ?').get(relativePath) as { id: string; content: string; title:string } | undefined;
   const documentId = existing?.id ?? createHash('sha256').update(relativePath).digest('hex').slice(0, 24);
-  if (existing?.content === content) {
+  if (existing?.content === content && existing.title === title) {
     const chunkCount = Number((database.prepare('SELECT COUNT(*) AS count FROM knowledge_chunks WHERE document_id = ?').get(documentId) as { count: number }).count);
     database.prepare('UPDATE knowledge_documents SET bytes=?,modified_at=?,indexed_at=? WHERE id=?').run(input.bytes ?? Buffer.byteLength(content, 'utf8'), input.modifiedAt, indexedAt, documentId);
+    indexRagDocumentById(documentId);
     return { documentId, relativePath, title, chunks: chunkCount, indexedAt, reused: true };
   }
   const oldChunkIds = existing ? (database.prepare('SELECT id FROM knowledge_chunks WHERE document_id = ?').all(documentId) as Array<{ id: string }>).map((row) => row.id) : [];
   const chunks = chunkMarkdown(content);
-  database.exec('BEGIN');
+  database.exec('SAVEPOINT knowledge_index_update');
   try {
     if (sqliteVecAvailable && oldChunkIds.length) {
       const removeVector = database.prepare('DELETE FROM knowledge_vectors WHERE chunk_id = ?');
@@ -361,9 +366,10 @@ export function indexKnowledgeContent(input: { relativePath: string; content: st
     });
     refreshFts();
     refreshDocumentRelations();
-    database.exec('COMMIT');
+    indexRagDocumentById(documentId);
+    database.exec('RELEASE SAVEPOINT knowledge_index_update');
   } catch (error) {
-    database.exec('ROLLBACK');
+    database.exec('ROLLBACK TO SAVEPOINT knowledge_index_update; RELEASE SAVEPOINT knowledge_index_update');
     throw error;
   }
   return { documentId, relativePath, title, chunks: chunks.length, indexedAt, reused: false };
@@ -412,7 +418,7 @@ export function expandedChunkExcerpt(documentId: string, headingPath: string, po
   return [parent ? `父节：${parent.heading_path}\n${parent.content}` : '', adjacent ? `相邻内容：${adjacent.content}` : '', `${headingPath ? `${headingPath}\n` : ''}${content}`].filter(Boolean).join('\n\n').slice(0, limit);
 }
 
-export function searchKnowledgeDocuments(query: string, sourcePath?: string | null, limit = 4, projectId?: string | null) {
+export function legacySearchKnowledgeDocuments(query: string, sourcePath?: string | null, limit = 4, projectId?: string | null) {
   const priorities = projectId ? projectDocumentPriorities(projectId) : null;
   const inRetrievalScope = (documentId: string, relativePath: string) => projectId
     ? priorities?.byId.has(documentId) === true
@@ -423,7 +429,8 @@ export function searchKnowledgeDocuments(query: string, sourcePath?: string | nu
   const bestByDocument = new Map<string, RankedDocument>();
   for (const row of rows) {
     if (!inRetrievalScope(row.document_id, row.relative_path)) continue;
-    const vector = JSON.parse(row.vector_json) as number[];
+    const savedVector = JSON.parse(row.vector_json) as number[];
+    const vector = savedVector.length===vectorSize?savedVector:vectorize(`${row.title}\n${row.heading_path}\n${row.content}`);
     const score = vector.reduce((total, value, index) => total + value * (queryVector[index] ?? 0), 0);
     const current = bestByDocument.get(row.document_id);
     if (!current || score > current.score) bestByDocument.set(row.document_id, { id: row.document_id, title: row.title, relative_path: row.relative_path, excerpt: row.content, score, headingPath: row.heading_path, position: row.position });
@@ -576,4 +583,8 @@ export async function reindexKnowledgeDocument(relativePathInput: string) {
     database.exec('ROLLBACK');
     throw error;
   }
+}
+
+export function searchKnowledgeDocuments(query:string,sourcePath?:string|null,limit=4,projectId?:string|null){
+  return retrieveKnowledgeLocal({query,sourcePath:projectId?null:sourcePath,limit,projectId}).hits;
 }

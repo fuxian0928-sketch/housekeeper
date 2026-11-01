@@ -2,6 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createSpeechGate, listenForTranscript, NoSpeechError } from './voice-listening';
 
+test('wake capture accepts quieter speech and closes promptly after the phrase', () => {
+ const gate = createSpeechGate(0, true);
+ gate(.02, 0); gate(.02, 40); gate(.02, 80);
+ assert.deepEqual(gate(0, 540), { heardVoice: true, lastVoiceAt: 80, stop: true });
+ assert.deepEqual(createSpeechGate(0, true)(0, 3500), { heardVoice: false, lastVoiceAt: 0, stop: true });
+});
+
 test('a click before a delayed answer does not close the recording', () => {
   const gate = createSpeechGate(0);
   for (let time = 0; time < 4000; time += 40) {
@@ -9,11 +16,11 @@ test('a click before a delayed answer does not close the recording', () => {
   }
   for (let time = 4000; time <= 4400; time += 40) gate(.07, time);
   assert.equal(gate(0, 5200).stop, false);
-  assert.deepEqual(gate(0, 5600), { heardVoice: true, stop: true });
+  assert.deepEqual(gate(0, 5600), { heardVoice: true, lastVoiceAt: 4400, stop: true });
 });
 
 test('silence has a bounded wait and is not treated as speech', () => {
-  assert.deepEqual(createSpeechGate(0)(0, 12000), { heardVoice: false, stop: true });
+  assert.deepEqual(createSpeechGate(0)(0, 12000), { heardVoice: false, lastVoiceAt: 0, stop: true });
 });
 
 test('empty ASR result retries fresh recording, then uses the second utterance', async () => {

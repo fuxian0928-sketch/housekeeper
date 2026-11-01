@@ -1,3 +1,4 @@
+import { isUnknownToolOutcome } from './tool-outcome.js';
 import { randomUUID } from 'node:crypto';
 import { database, nowIso } from '../../db.js';
 
@@ -15,6 +16,14 @@ export function toolPolicy(name: string): ToolPolicy {
   const value=(database.prepare('SELECT value FROM app_settings WHERE key=?').get(`tool_policy:${name}`) as {value:string}|undefined)?.value;
   return value==='auto'||value==='confirm'?value:'default';
 }
+export function toolExecutionPolicy(name:string):ToolPolicy{
+  const policy=toolPolicy(name);
+  // A connected, authenticated computer task is already authorized by its
+  // initiating user instruction. Explicit per-tool preferences still win.
+  if(policy!=='default')return policy;
+  if(['save_memory','replace_memory','forget_memory'].includes(name))return database.prepare("SELECT value FROM app_settings WHERE key='memory_auto_apply'").get()?.value==='0'?'confirm':'auto';
+  return name==='computer_action'?'auto':policy;
+}
 export function saveToolPolicy(name: string, policy: ToolPolicy) {
   if(!['default','auto','confirm'].includes(policy)) throw Object.assign(new Error('执行策略无效。'),{statusCode:400});
   database.prepare('INSERT INTO app_settings(key,value,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at').run(`tool_policy:${name}`,policy,nowIso());
@@ -24,11 +33,11 @@ export function controlledTool<T>(name: string, execute: () => T, confirmed=fals
   const start=Date.now();
   const record=(status:string,error:string|null=null)=>database.prepare('INSERT INTO capability_tool_runs VALUES (?,?,?,?,?,?)').run(randomUUID(),name,status,Date.now()-start,error,nowIso());
   if (!toolEnabled(name)) { record('blocked','工具已停用'); throw Object.assign(new Error('这个工具已在能力中心停用，请先启用后再试。'),{statusCode:403}); }
-  if (toolPolicy(name)==='confirm'&&!confirmed) { record('blocked','需要确认'); throw Object.assign(new Error('这个工具需要确认后执行。'),{statusCode:409}); }
+  if (toolExecutionPolicy(name)==='confirm'&&!confirmed) { record('blocked','需要确认'); throw Object.assign(new Error('这个工具需要确认后执行。'),{statusCode:409}); }
   try { const result=execute();
-    if(result && typeof (result as unknown as Promise<unknown>).then==='function') return Promise.resolve(result).then(value=>{record('succeeded');return value;},error=>{record('failed',name.startsWith('mcp_')?'MCP 调用失败，请检查连接或参数。':error instanceof Error?error.message.slice(0,500):'工具执行失败');throw error;}) as T;
+    if(result && typeof (result as unknown as Promise<unknown>).then==='function') return Promise.resolve(result).then(value=>{record('succeeded');return value;},error=>{record(isUnknownToolOutcome(error)?'unknown':'failed',isUnknownToolOutcome(error)?'请求结果未确认，请先核对目标服务，勿重复执行。':name.startsWith('mcp_')?'MCP 调用失败，请检查连接或参数。':error instanceof Error?error.message.slice(0,500):'工具执行失败');throw error;}) as T;
     record('succeeded'); return result; }
-  catch(error) { record('failed',error instanceof Error?error.message.slice(0,500):'工具执行失败'); throw error; }
+  catch(error) { record(isUnknownToolOutcome(error)?'unknown':'failed',error instanceof Error?error.message.slice(0,500):'工具执行失败'); throw error; }
 }
 export function listToolRuns() {
   ensureStore();

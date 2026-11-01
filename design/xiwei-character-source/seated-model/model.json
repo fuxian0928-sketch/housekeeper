@@ -1,0 +1,46 @@
+{
+  "schema": "xiwei-artmesh-1",
+  "id": "xiwei-seated-v1",
+  "revision": 4,
+  "label": "希微 · 坐姿二维模型",
+  "canvas": [1024, 1536],
+  "grid": [64, 96],
+  "textures": {
+    "character": "character-v1.png",
+    "closedEyes": "eyes-closed-v1.png",
+    "openMouth": "mouth-open-v1.png",
+    "uniform": "uniform-matte-v1.png",
+    "background": "chair-background-v1.png",
+    "source": "source-scene-v1.png"
+  },
+  "regions": {
+    "leftEye": { "x": 441, "y": 181, "w": 64, "h": 40 },
+    "rightEye": { "x": 512, "y": 163, "w": 61, "h": 40 },
+    "mouth": { "x": 489, "y": 223, "w": 58, "h": 43 },
+    "uniform": { "x": 395, "y": 298, "w": 270, "h": 300 }
+  },
+  "environment": {
+    "panorama": "panoramic-cabin-v1.png",
+    "canvas": [1774, 887],
+    "projection": "centered cover, top aligned; reveal side windows as the pane widens"
+  },
+  "parameters": {
+    "headX": { "min": -1, "max": 1, "default": 0 },
+    "headRoll": { "min": -1, "max": 1, "default": 0 },
+    "breath": { "min": 0, "max": 1, "default": 0 },
+    "hairSway": { "min": 0, "max": 1, "default": 0 },
+    "eyeClose": { "min": 0, "max": 1, "default": 0 },
+    "mouthOpen": { "min": 0, "max": 1, "default": 0 }
+  },
+  "pinned": {
+    "hands": [0.44, 0.37, 0.64, 0.445],
+    "lowerBodyStartsAt": 0.56
+  },
+  "status": {
+    "renderable": true,
+    "cubismBound": false,
+    "format": "WebGL art mesh; not a Cubism moc3",
+    "expressionScope": "neutral, blink, resting, amplitude-driven mouth",
+    "limits": "Small head and hair movement only; no large head turn, new gesture, leg uncrossing or phoneme alignment."
+  }
+}

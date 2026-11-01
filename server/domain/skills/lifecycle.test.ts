@@ -19,7 +19,7 @@ test('HTTP tool lifecycle: schema, secret, preview, confirmation, continuation, 
  t.after(()=>{server.closeAllConnections();server.close();database.close();});
  const {port}=server.address() as {port:number};
  const http=await import('./http-tools.js');
- const {executeSkillTool,listSkillTools}=await import('./skill-tool-registry.js');
+ const {listSkillTools}=await import('./skill-tool-registry.js');
  const {buildManagedSkill,listManagedSkills}=await import('./skill-manager.js');
  const work=await import('./skill-workbench.js');
  const {saveToolEnabled}=await import('./tool-controls.js');

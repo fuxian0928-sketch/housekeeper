@@ -3,6 +3,8 @@ const { WaveFile } = wavefile;
 
 type SpeechSettings = {
   speechServiceBaseUrl: string;
+  speechLegacyRecognitionBaseUrl?: string;
+  speechLegacySynthesisBaseUrl?: string;
   speechRecognitionModel: string;
   speechSynthesisModel: string;
   speechVoice: string;
@@ -49,12 +51,17 @@ function apiMessage(payload: Record<string, unknown>, fallback: string) {
 }
 
 function speechEndpoint(baseUrl: string, path: string) {
-  const root = baseUrl.trim().replace(/\/+$/, '').replace(/\/compatible-mode\/v1$/, '/api/v1');
-  if (!root) throw new Error('请先在设置中填写百炼业务空间服务地址。');
-  if (!/\.maas\.aliyuncs\.com\/api\/v1$/.test(root) && !/dashscope[^/]*\.aliyuncs\.com\/api\/v1$/.test(root)) {
+  if (!baseUrl.trim()) throw new Error('请先在设置中填写百炼业务空间服务地址。');
+  let url: URL;
+  try { url = new URL(baseUrl.trim()); }
+  catch { throw new Error('语音服务地址应为百炼 API 根地址，并以 /api/v1 结尾。'); }
+  if (url.protocol !== 'https:' || url.username || url.password || url.port || url.search || url.hash ||
+      !(/^[a-zA-Z0-9-]+\.(?:cn-beijing|ap-southeast-1)\.maas\.aliyuncs\.com$/.test(url.hostname) || /^dashscope(?:-intl|-us)?\.aliyuncs\.com$/.test(url.hostname)) ||
+      !['/api/v1', '/api/v1/', '/compatible-mode/v1', '/compatible-mode/v1/'].includes(url.pathname)) {
     throw new Error('语音服务地址应为百炼 API 根地址，并以 /api/v1 结尾。');
   }
-  return `${root}${path}`;
+  url.pathname = `/api/v1${path}`;
+  return url.toString();
 }
 
 export async function transcribeAudio(settings: SpeechSettings, apiKey: string, audioDataUrl: string, signal?: AbortSignal) {
@@ -63,7 +70,7 @@ export async function transcribeAudio(settings: SpeechSettings, apiKey: string, 
   }
   const mime = audioDataUrl.slice(5, audioDataUrl.indexOf(';'));
   const format = mime.includes('wav') ? 'wav' : mime.includes('ogg') || mime.includes('opus') ? 'opus' : mime.includes('mpeg') || mime.includes('mp3') ? 'mp3' : 'webm';
-  const result = await fetch(speechEndpoint(settings.speechServiceBaseUrl, '/services/aigc/multimodal-generation/generation'), {
+  const result = await fetch(speechEndpoint(settings.speechLegacyRecognitionBaseUrl ?? settings.speechServiceBaseUrl, '/services/aigc/multimodal-generation/generation'), {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'X-DashScope-SSE': 'disable' },
     body: JSON.stringify({
@@ -85,16 +92,20 @@ export async function transcribeAudio(settings: SpeechSettings, apiKey: string, 
   return text;
 }
 
-export async function synthesizeSpeech(settings: SpeechSettings, apiKey: string, text: string) {
+export async function synthesizeSpeech(settings: SpeechSettings, apiKey: string, text: string, signal?: AbortSignal) {
+  // One budget spans synthesis AND download; a superseded turn must cancel both.
+  const lifetime = signal ? AbortSignal.any([signal, AbortSignal.timeout(20_000)]) : AbortSignal.timeout(20_000);
+  lifetime.throwIfAborted();
   const cleanText = text.trim().slice(0, 3000);
   if (!cleanText) throw Object.assign(new Error('没有可播报的文字。'), { statusCode: 400 });
-  const result = await fetch(speechEndpoint(settings.speechServiceBaseUrl, '/services/audio/tts/SpeechSynthesizer'), {
+  const result = await fetch(speechEndpoint(settings.speechLegacySynthesisBaseUrl ?? settings.speechServiceBaseUrl, '/services/audio/tts/SpeechSynthesizer'), {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ model: settings.speechSynthesisModel, input: { text: cleanText, voice: settings.speechVoice, format: 'wav', sample_rate: 24000, ...(settings.speechInstruction ? { instruction: settings.speechInstruction } : {}) } }),
-    signal: AbortSignal.timeout(90_000)
+    signal: lifetime
   });
   const payload = await result.json().catch(() => ({})) as Record<string, unknown>;
+  lifetime.throwIfAborted();
   if (!result.ok) throw new Error(apiMessage(payload, `语音合成服务返回 ${result.status}。`));
   const output = payload.output && typeof payload.output === 'object' ? payload.output as Record<string, unknown> : {};
   const audio = output.audio && typeof output.audio === 'object' ? output.audio as Record<string, unknown> : {};
@@ -103,11 +114,16 @@ export async function synthesizeSpeech(settings: SpeechSettings, apiKey: string,
   try { audioUrl = new URL(url); } catch { throw new Error('语音合成模型没有返回音频。'); }
   const trustedOss = /(?:^|\.)oss-cn-beijing\.aliyuncs\.com$/i.test(audioUrl.hostname);
   if (audioUrl.protocol !== 'https:' && !(audioUrl.protocol === 'http:' && trustedOss)) throw new Error('语音合成返回了不可信的音频地址。');
-  const audioResponse = await fetch(url, { signal: AbortSignal.timeout(60_000) });
+  const audioResponse = await fetch(url, { signal: lifetime });
   if (!audioResponse.ok) throw new Error(`合成音频下载失败：${audioResponse.status}。`);
   const downloaded = Buffer.from(await audioResponse.arrayBuffer());
+  lifetime.throwIfAborted();
   if (!downloaded.length || downloaded.length > 20_000_000) throw new Error('合成音频为空或过大。');
   const bytes = normalizeSpeechWave(downloaded);
   if (!bytes.length || bytes.length > 20_000_000) throw new Error('合成音频为空或过大。');
-  return `data:${audioResponse.headers.get('content-type') || 'audio/wav'};base64,${bytes.toString('base64')}`;
+  // A storage service may label WAV as octet-stream or x-wav. Use the verified
+  // file signature so the resulting URL remains compatible with recognition.
+  const isWave = bytes.length >= 12 && bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WAVE';
+  const mime = isWave ? 'audio/wav' : (audioResponse.headers.get('content-type') || 'audio/wav');
+  return `data:${mime};base64,${bytes.toString('base64')}`;
 }

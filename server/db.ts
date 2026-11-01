@@ -4,11 +4,12 @@ import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import * as sqliteVec from 'sqlite-vec';
 import { currentSchemaVersion, latestSchemaVersion, runMigrations } from './storage/migrations.js';
+import { ensureVoiceSessionHandoffTables } from './domain/conversations/voice-session-handoff.js';
 
 const serverDirectory = dirname(fileURLToPath(import.meta.url));
 const dataDirectory = join(serverDirectory, '..', 'data');
 const configuredDatabasePath = process.env.AI_SECRETARY_DB_PATH?.trim();
-export const databasePath = configuredDatabasePath ? resolve(configuredDatabasePath) : join(dataDirectory, 'ai-secretary-v01.db');
+export const databasePath = configuredDatabasePath ? resolve(configuredDatabasePath) : join(dataDirectory, 'housekeeper.db');
 export const databaseDirectory = dirname(databasePath);
 const databaseExistedBeforeStartup = existsSync(databasePath);
 mkdirSync(dirname(databasePath), { recursive: true });
@@ -172,6 +173,7 @@ export function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id, status);
     CREATE INDEX IF NOT EXISTS idx_documents_project ON documents(project_id);
     CREATE INDEX IF NOT EXISTS idx_memories_project ON memories(project_id, status);
+    CREATE INDEX IF NOT EXISTS idx_messages_conversation_created ON messages(conversation_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_events_project ON events(project_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_message_suggestions_status ON message_suggestions(status, suggestion_type);
     CREATE INDEX IF NOT EXISTS idx_obsidian_write_requests_conversation ON obsidian_write_requests(conversation_id, status, created_at DESC);
@@ -179,6 +181,7 @@ export function initializeDatabase() {
   `);
 
   runMigrations(database);
+  ensureVoiceSessionHandoffTables(database);
   if (sqliteVecAvailable) {
     database.exec(`
       CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_vectors USING vec0(chunk_id TEXT PRIMARY KEY, embedding float[1024]);
@@ -202,7 +205,6 @@ export function initializeDatabase() {
   database.prepare(`INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES ('memory_auto_confirm', '1', ?)`).run(timestamp);
   database.prepare(`INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES ('memory_document_capture', '1', ?)`).run(timestamp);
   database.prepare(`INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES ('memory_behavior_capture', '1', ?)`).run(timestamp);
-  // Preserve the user's saved memory preferences.
 
   const vaultSetting = database.prepare(`SELECT value FROM app_settings WHERE key = 'vault_path'`).get() as { value: string } | undefined;
   if (!vaultSetting?.value) {

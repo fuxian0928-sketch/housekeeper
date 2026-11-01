@@ -1,4 +1,5 @@
 import { pinyin } from 'pinyin-pro';
+import { acceptsWakeTranscript, isBuiltInWakeWord } from '../../../server/domain/voice-wake-transcript';
 
 function syllables(value: string): string[] {
   return pinyin(value.toLowerCase().replace(/e/gi, '伊'), { toneType: 'none', type: 'array' })
@@ -6,6 +7,7 @@ function syllables(value: string): string[] {
 }
 
 export function wakeWordScore(recognized: string, wakeWord: string): number {
+  if (isBuiltInWakeWord(wakeWord)) return acceptsWakeTranscript(recognized, wakeWord) ? 1 : 0;
   const heard = syllables(recognized);
   const full = syllables(wakeWord);
   if (!full.length || !heard.length) return 0;

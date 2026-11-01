@@ -1,6 +1,6 @@
 {
   "name": "housekeeper",
-  "version": "1.0.0",
+  "version": "3.3.0",
   "private": true,
   "type": "module",
   "main": "electron/main.cjs",
@@ -9,17 +9,21 @@
     "dev:web": "vite",
     "dev:server": "tsx watch server/index.ts",
     "build": "tsc -b && vite build",
-    "build:server": "node scripts/clean-server-build.mjs && tsc -p tsconfig.server.json && node scripts/build-self-source.mjs",
+    "build:server": "node scripts/clean-server-build.mjs && tsc -p tsconfig.server.json && node scripts/copy-retrieval-assets.mjs && node scripts/build-self-source.mjs",
     "build:desktop": "pnpm build && pnpm build:server",
-    "package:win:local": "pnpm build:desktop && electron-builder --win nsis",
+    "package:win:local": "pnpm build:desktop && node scripts/voice-lab/package_native.cjs",
     "package:win": "pnpm package:win:local",
+    "publish:win": "pnpm package:win:local",
     "start": "tsx server/index.ts",
     "check": "tsc -b --pretty false",
-    "test": "tsx --test --test-concurrency=1 server/**/*.test.ts",
-    "desktop": "electron ."
+    "test": "node --require ./scripts/offline-test-guard.cjs --import tsx --test --test-concurrency=1 server/**/*.test.ts scripts/public-edition.test.mjs",
+    "desktop": "electron .",
+    "package:win:source": "pnpm build:desktop && electron-builder --win nsis --publish never"
   },
   "dependencies": {
+    "@huggingface/tokenizers": "0.2.0",
     "@modelcontextprotocol/sdk": "1.30.0",
+    "@xmldom/xmldom": "0.9.12",
     "cors": "^2.8.5",
     "exceljs": "^4.4.0",
     "express": "^5.1.0",
@@ -28,6 +32,7 @@
     "mammoth": "^1.12.2",
     "mdast-util-gfm-table": "^2.0.0",
     "mdast-util-to-markdown": "^2.1.2",
+    "pdfjs-dist": "6.4.299",
     "pinyin-pro": "^3.29.4",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
@@ -36,8 +41,10 @@
     "remark-gfm": "^4.0.1",
     "remark-parse": "^11.0.0",
     "sqlite-vec": "^0.1.9",
+    "typescript": "^5.9.3",
     "unified": "^11.0.5",
-    "wavefile": "11.0.0"
+    "wavefile": "11.0.0",
+    "ws": "8.21.3"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
@@ -46,12 +53,12 @@
     "@types/node": "^24.3.0",
     "@types/react": "^19.1.10",
     "@types/react-dom": "^19.1.7",
+    "@types/ws": "8.18.1",
     "@vitejs/plugin-react": "^4.7.0",
     "concurrently": "^9.2.1",
     "electron": "^38.2.0",
     "electron-builder": "^26.0.12",
     "tsx": "^4.20.5",
-    "typescript": "^5.9.2",
     "vite": "^7.1.3"
   },
   "build": {
@@ -64,12 +71,13 @@
       "node_modules/sqlite-vec*/**/*"
     ],
     "directories": {
-      "output": "outputs/Housekeeper-v1.0.0"
+      "output": "outputs/Housekeeper-v3.3.0"
     },
     "files": [
       "dist/**/*",
       "build/server/**/*",
       "skills/**/*",
+      "assistant-identity.json",
       "electron/**/*",
       "node_modules/sqlite-vec/**/*",
       "node_modules/sqlite-vec-windows-x64/**/*",
@@ -83,6 +91,32 @@
         "to": "speech-scripts",
         "filter": [
           "*.ps1"
+        ]
+      },
+      {
+        "from": "scripts/voice-lab",
+        "to": "native-voice/scripts/voice-lab",
+        "filter": [
+          "run_duplex.py",
+          "runtime_probe.py",
+          "audio_pipeline.py",
+          "device_selection.py",
+          "duplex_runtime.py",
+          "wake_gate.py",
+          "interruption_capture.py",
+          "interruption_control.py",
+          "playback_buffer.py",
+          "turn_segmenter.py",
+          "wake_feedback.py",
+          "worker.py",
+          "worker_lifetime.py",
+          "requirements.txt",
+          "model.json",
+          "local_speech_worker.py",
+          "moss_ort_runtime.py",
+          "speech_pcm.py",
+          "local-speech-requirements.txt",
+          "licenses/MOSS-TTS-Nano-APACHE-2.0.txt"
         ]
       }
     ],

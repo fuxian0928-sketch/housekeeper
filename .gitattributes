@@ -1,0 +1,15 @@
+
+* text=auto eol=lf
+*.png binary
+*.ico binary
+*.wav binary
+*.cmd text eol=crlf
+
+# Preserve upstream notice bytes used by the runtime integrity manifest.
+scripts/voice-lab/notices/*-LICENSE.txt -text
+scripts/voice-lab/licenses/*.txt -text -whitespace
+scripts/voice-lab/moss_ort_runtime.py text eol=lf
+# Preserve the pinned tokenizer and license hashes on Windows checkouts.
+server/retrieval/assets/bge-m3-tokenizer*.json binary
+server/retrieval/assets/manifest.json text eol=lf
+server/retrieval/assets/*LICENSE*.txt -text

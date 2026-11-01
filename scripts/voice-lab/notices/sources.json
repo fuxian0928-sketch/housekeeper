@@ -1,0 +1,9 @@
+{
+  "sherpa-onnx-core": {
+    "version": "1.13.8",
+    "file": "sherpa-onnx-LICENSE.txt",
+    "source": "https://raw.githubusercontent.com/k2-fsa/sherpa-onnx/11afbd009a7f8c08f4bcf2fc1b265d0df4670fbf/LICENSE",
+    "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "scope": "Project license only; bundled native dependency notices require separate review."
+  }
+}

@@ -1,3 +1,4 @@
+import { modelReasoning } from './model-reasoning.js';
 export type ReasoningEffort = 'auto' | 'low' | 'medium' | 'high';
 
 export interface LlmCompletionOptions {
@@ -38,8 +39,7 @@ export class OpenAICompatibleLlmProvider implements LlmProvider {
   private requestBody(input: string, options: LlmCompletionOptions, stream: boolean) {
     const body: Record<string, unknown> = { model: this.model, messages: [{ role: 'system', content: options.instruction }, { role: 'user', content: input }], stream };
     if (options.maxTokens) body.max_tokens = options.maxTokens;
-    if (options.enableThinking === false && /^qwen/i.test(this.model)) body.enable_thinking = false;
-    else if (options.reasoningEffort && options.reasoningEffort !== 'auto') body.reasoning_effort = options.reasoningEffort;
+    Object.assign(body,modelReasoning(this.model,this.baseUrl,options.reasoningEffort,options.enableThinking));
     return body;
   }
 
@@ -72,6 +72,7 @@ export class OpenAICompatibleLlmProvider implements LlmProvider {
       stream: false
     };
     if (options.maxTokens) body.max_tokens = options.maxTokens;
+    Object.assign(body,modelReasoning(this.model,this.baseUrl,options.reasoningEffort,options.enableThinking));
     const result = await fetch(`${this.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
       method: 'POST', headers: { Authorization: `Bearer ${this.apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -89,7 +90,8 @@ export class OpenAICompatibleLlmProvider implements LlmProvider {
 
   async stream(input: string, onDelta: (delta: string) => void, options: LlmCompletionOptions) {
     const firstTokenController = new AbortController();
-    const firstTokenTimer = setTimeout(() => firstTokenController.abort(new Error('模型等待首段内容超过 3 分钟。')), 180000);
+    let firstTokenTimer = setTimeout(() => firstTokenController.abort(new Error('模型长时间没有返回内容。')), 180000);
+    const activity=()=>{clearTimeout(firstTokenTimer);firstTokenTimer=setTimeout(()=>firstTokenController.abort(new Error('模型数据流长时间没有继续返回。')),180000);};
     const signals = [firstTokenController.signal, AbortSignal.timeout(options.timeoutMs ?? 600000), ...(options.signal ? [options.signal] : [])];
     try {
       const result = await fetch(`${this.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
@@ -122,9 +124,11 @@ export class OpenAICompatibleLlmProvider implements LlmProvider {
           const first = choices[0] && typeof choices[0] === 'object' ? choices[0] as Record<string, unknown> : null;
           if (typeof first?.finish_reason === 'string') finishReason = first.finish_reason;
           const delta = first?.delta && typeof first.delta === 'object' ? first.delta as Record<string, unknown> : null;
+          // Thinking is transport activity, never display or speak its raw text.
+          if(typeof delta?.reasoning_content==='string'&&delta.reasoning_content)activity();
           const content = typeof delta?.content === 'string' ? delta.content : '';
           if (!content) continue;
-          clearTimeout(firstTokenTimer);
+          activity();
           answer += content;
           onDelta(content);
         }

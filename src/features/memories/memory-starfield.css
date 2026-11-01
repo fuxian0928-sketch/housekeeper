@@ -1,0 +1,129 @@
+.workbench-resource:has(>.memory-starfield) { padding: 0; overflow: hidden; background: #080d1c; }
+.memory-starfield {
+  --star-ink: #e7ecf8;
+  --star-muted: #a1aec9;
+  --star-rule: rgb(158 182 231 / 12%);
+  --star-violet: #c1a8ff;
+  --star-blue: #8ed4ee;
+  --star-amber: #e6bb7b;
+  display: flex; flex-direction: column; width: 100%; height: 100%; min-height: 440px;
+  overflow: hidden; color: var(--star-ink); background: #080d1c;
+  container-type: inline-size; isolation: isolate; color-scheme: dark;
+}
+.memory-starfield button, .memory-starfield select, .memory-starfield input { font: inherit; }
+.memory-starfield button { cursor: pointer; touch-action: manipulation; }
+.memory-starfield button:disabled { opacity: .42; cursor: default; }
+.memory-starfield button:focus-visible, .memory-starfield select:focus-visible {
+  outline: 2px solid #b8c9f7; outline-offset: 3px;
+}
+.starfield-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 24px 27px 17px; }
+.starfield-heading h2 { display: flex; align-items: center; gap: 14px; margin: 0; color: #f1f3fc; font-size: 16px; font-weight: 500; line-height: 1.4; letter-spacing: .1em; }
+.starfield-heading p { margin: 7px 0 0; color: var(--star-muted); font-size: 11px; letter-spacing: .08em; }
+.starfield-live { display: inline-flex; align-items: center; gap: 6px; font-size: 10px; color: #afc9cc; font-weight: 400; letter-spacing: 0; }
+.starfield-live i { width: 4px; height: 4px; border-radius: 50%; background: #9bd8c9; box-shadow: 0 0 7px rgb(155 216 201 / 45%); }
+.starfield-count { display: flex; align-items: baseline; gap: 7px; white-space: nowrap; }
+.starfield-count strong { font: 400 22px/1.2 Georgia, serif; color: #e3d6ff; font-variant-numeric: tabular-nums; }
+.starfield-count span { font-size: 10px; color: var(--star-muted); }
+.starfield-toolbar { display: flex; align-items: center; gap: 12px; padding: 0 26px 18px; border-bottom: 1px solid var(--star-rule); z-index: 2; }
+.starfield-search { display: flex; align-items: center; gap: 9px; min-width: 0; flex: 1; max-width: 410px; height: 34px; padding: 0 11px; border: 1px solid rgb(170 184 225 / 16%); border-radius: 8px; background: #11192c; color: #a8b7d3; transition: background-color 160ms ease; }
+.starfield-search:focus-within { background: #18213a; }
+.starfield-search input, .refined-shell .starfield-search input:focus { flex: 1; min-width: 0; width: 100%; height: 100%; padding: 0!important; border: 0!important; outline: 0!important; box-shadow: none!important; background: transparent!important; font-size: 11px; color: var(--star-ink); caret-color: #c9b5ff; }
+.starfield-search input::placeholder { color: #a1aec9; }
+.starfield-search button { display: grid; place-items: center; border: 0; background: none; padding: 4px; color: var(--star-muted); }
+.starfield-toolbar select { max-width: 160px; height: 32px; padding: 0 25px 0 9px; border: 0; border-radius: 6px; background-color: #080d1c; color: #bdc7dd; font-size: 11px; text-overflow: ellipsis; }
+.starfield-history-toggle { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; height: 31px; padding: 0 10px; border: 1px solid rgb(170 184 225 / 15%); border-radius: 7px; background: transparent; color: #bec8df; font-size: 11px; transition: background-color 160ms ease, color 160ms ease; }
+.starfield-history-toggle:hover { background: #1c233c; }
+.starfield-history-toggle.active { border-color: #5c506f; background: #282238; color: #e6c593; }
+.starfield-canvas {
+  position: relative; flex: 1; min-height: 250px; overflow: hidden;
+  background: radial-gradient(ellipse at 62% 51%, rgb(77 47 125 / 26%), transparent 52%), radial-gradient(ellipse at 29% 70%, rgb(25 66 105 / 31%), transparent 52%), radial-gradient(ellipse at 81% 16%, rgb(43 63 110 / 17%), transparent 46%), #080d1c;
+}
+.starfield-canvas::after { content: ''; position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 90px 18px rgb(3 7 17 / 28%); }
+.starfield-map { display: block; position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: grab; outline: none; }
+.starfield-map:focus-visible { outline: 1px solid #94a9d8; outline-offset: -5px; }
+.starfield-map[data-dragging=true] { cursor: grabbing; }
+.starfield-world.flying { transition: transform 480ms cubic-bezier(.16, 1, .3, 1); }
+.starfield-link { fill: none; stroke: #8996c7; stroke-width: .8; opacity: .42; transition: opacity 200ms ease, stroke 200ms ease; pointer-events: none; vector-effect: non-scaling-stroke; }
+.starfield-link.link-belongs { stroke: #7380a9; stroke-dasharray: 1 8; stroke-width: .6; opacity: .23; }
+.starfield-link.link-sequence { stroke: #80bfd0; stroke-dasharray: 3 5; opacity: .35; }
+.starfield-link.link-updates { stroke: #d8ad6b; stroke-dasharray: 4 5; opacity: .68; }
+.starfield-link.link-conflict { stroke: #e4a6c6; stroke-dasharray: 3 4; }
+.starfield-link.lit { stroke: #c6b8ff; stroke-width: 1.1; opacity: .95; }
+.starfield-link.link-updates.lit { stroke: #f0c987; }
+.starfield-link.dim { opacity: .11; }
+.starfield-node { cursor: pointer; outline: none; }
+.starfield-node:focus { outline: none; }
+.starfield-node-body { stroke: none; transition: opacity 200ms ease; }
+.node-event .starfield-node-body { stroke: none; }
+.node-group .starfield-node-body { stroke: none; }
+.node-memory .starfield-node-body { animation: starfield-core-breathe 4.4s ease-in-out infinite; }
+.node-memory .starfield-node-aura { animation: starfield-shimmer 4.4s ease-in-out infinite; transform-origin: center; transform-box: fill-box; }
+.node-group .starfield-node-aura { animation: starfield-shimmer 6.4s ease-in-out infinite; transform-origin: center; transform-box: fill-box; }
+.node-memory:nth-of-type(3n) .starfield-node-aura { animation-delay: -1.8s; }
+.node-memory:nth-of-type(3n+1) .starfield-node-aura { animation-delay: -3.2s; }
+.node-memory:nth-of-type(3n) .starfield-node-body { animation-delay: -1.8s; }
+.node-memory:nth-of-type(3n+1) .starfield-node-body { animation-delay: -3.2s; }
+.memory-starfield[data-active=false] .starfield-node-aura, .memory-starfield[data-active=false] .starfield-node-body { animation-play-state: paused; }
+.starfield-node.dim .starfield-node-body, .starfield-node.dim .starfield-node-aura { opacity: .48; }
+.starfield-core-glint { fill: #fff; }
+.starfield-node-orbit { fill: none; stroke: #baa9f3; stroke-width: .8; opacity: 0; transition: opacity 180ms ease; }
+.node-group .starfield-node-orbit { opacity: .45; stroke-dasharray: 1 5; stroke: #8395c7; }
+.starfield-node:hover .starfield-node-orbit, .starfield-node:focus-visible .starfield-node-orbit, .starfield-node.selected .starfield-node-orbit { opacity: 1; stroke: #e5d4ff; stroke-width: 1.2; }
+.starfield-node.selected .starfield-node-aura { opacity: 1; }
+.state-historical .starfield-node-body { fill: #2a2130; stroke: #e1b77b; stroke-width: 1; stroke-dasharray: 2 2; }
+.state-historical .starfield-node-orbit { stroke: #e6bb7b; }
+.starfield-cluster-cross { fill: #fff; stroke: #c2d6ff; stroke-width: .55; }
+.starfield-node-label { fill: #c5cde1; paint-order: stroke; stroke: #0b1022; stroke-width: 4; stroke-linejoin: round; font-size: 11px; font-family: inherit; font-weight: 400; pointer-events: none; }
+.node-group .starfield-node-label { fill: #e3e7f6; font-size: 12px; font-weight: 500; letter-spacing: .05em; }
+.starfield-node.selected .starfield-node-label { fill: #fff1d8; font-weight: 500; }
+.starfield-canvas-note { display: flex; align-items: center; gap: 7px; position: absolute; left: 25px; top: 18px; max-width: calc(100% - 50px); color: #a2aecb; font-size: 10px; pointer-events: none; z-index: 1; }
+.starfield-canvas-note span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.starfield-hover { position: absolute; z-index: 5; width: 225px; padding: 13px 15px; box-sizing: border-box; pointer-events: none; background: rgb(17 25 45 / 96%); border: 1px solid rgb(170 184 225 / 25%); border-radius: 9px; box-shadow: 0 10px 26px -6px rgb(0 0 0 / 55%); animation: starfield-tooltip-enter 150ms 180ms both; }
+.starfield-hover>span { display: block; margin-bottom: 7px; font-size: 10px; color: #bba8e4; }.starfield-hover strong { display: block; font-size: 12px; font-weight: 500; color: #f1effb; }.starfield-hover p { margin: 8px 0 0; font-size: 11px; line-height: 1.8; color: #c3cee5; overflow-wrap: anywhere; }
+.starfield-map-controls { position: absolute; bottom: 18px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 4px; padding: 5px 7px; border: 1px solid rgb(170 184 225 / 21%); border-radius: 9px; background: rgb(17 25 45 / 94%); box-shadow: 0 6px 22px -5px rgb(0 0 0 / 40%); z-index: 4; }
+.starfield-map-controls button { display: grid; place-items: center; width: 28px; height: 27px; border: 0; border-radius: 5px; background: transparent; color: #c2cde5; }
+.starfield-map-controls button:hover { background: #2b3351; color: #fff; }
+.starfield-map-controls>span { height: 12px; width: 1px; margin: 0 4px; background: #3d4662; }
+.starfield-map-controls output { min-width: 36px; font-size: 10px; color: #c2cde5; text-align: center; font-variant-numeric: tabular-nums; }
+.starfield-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 30px; text-align: center; color: #bca9ed; pointer-events: none; z-index: 1; }
+.starfield-empty h3 { margin: 0; color: #e2e4f3; font-size: 14px; font-weight: 500; }
+.starfield-empty p { margin: 0; color: var(--star-muted); font-size: 11px; max-width: 250px; line-height: 1.8; }
+.starfield-error { position: absolute; left: 50%; top: 15px; transform: translateX(-50%); display: flex; gap: 12px; align-items: center; max-width: 90%; padding: 9px 14px; border: 1px solid #8b4e66; border-radius: 8px; background: #351e32; color: #ffd1dc; font-size: 11px; z-index: 5; box-shadow: 0 7px 15px -10px rgb(0 0 0 / 50%); }
+.starfield-error p { margin: 0; }.starfield-error button { border: 0; background: none; color: #ffdae4; white-space: nowrap; text-decoration: underline; text-underline-offset: 3px; }
+.starfield-detail { position: absolute; top: 17px; right: 18px; bottom: 67px; width: 272px; max-width: calc(100% - 36px); display: flex; flex-direction: column; background: rgb(16 24 43 / 97%); border: 1px solid rgb(165 181 221 / 24%); border-radius: 12px; box-shadow: 0 14px 35px -8px rgb(0 0 0 / 48%); z-index: 3; animation: starfield-detail-enter 240ms cubic-bezier(.16,1,.3,1); }
+.starfield-detail header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 13px 16px; border-bottom: 1px solid var(--star-rule); }
+.starfield-detail header>button { display: grid; place-items: center; padding: 4px; border: 0; border-radius: 4px; color: #b3c1dd; background: none; }
+.starfield-detail header>button:hover { background: #2a314b; }
+.starfield-kind { display: flex; align-items: center; gap: 7px; font-size: 10px; color: #d0c0f7; }
+.starfield-kind.historical { color: #efcd9c; }
+.starfield-detail-body { padding: 17px 17px 20px; overflow: auto; min-height: 0; overscroll-behavior: contain; scrollbar-color: #53617e transparent; scrollbar-width: thin; }
+.starfield-detail h3 { margin: 0 0 13px; color: #f1effb; font-size: 14px; font-weight: 500; line-height: 1.7; overflow-wrap: anywhere; }
+.starfield-detail-content { margin: 0 0 18px; color: #d0d7e9; font-size: 12px; line-height: 1.95; white-space: pre-wrap; overflow-wrap: anywhere; }
+.starfield-detail dl { margin: 0; padding: 14px 0; border-block: 1px solid var(--star-rule); }
+.starfield-detail dl>div { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; margin: 0 0 9px; font-size: 10px; line-height: 1.7; }.starfield-detail dl>div:last-child { margin: 0; }
+.starfield-detail dt { color: #a5b1cc; flex-shrink: 0; }.starfield-detail dd { margin: 0; text-align: right; color: #d1d9ee; overflow-wrap: anywhere; }
+.starfield-open-source { display: flex; align-items: center; gap: 7px; width: 100%; padding: 12px 0; border: 0; border-bottom: 1px solid var(--star-rule); background: none; color: #c5b8f6; font-size: 11px; text-align: left; }
+.starfield-open-source svg:last-child { margin-left: auto; }
+.starfield-relations { padding-top: 17px; }.starfield-relations h4 { display: flex; justify-content: space-between; margin: 0 0 10px; font-size: 11px; font-weight: 500; }.starfield-relations h4>span { color: #b1bdda; font-size: 10px; }
+.starfield-relations>button, .starfield-directory .starfield-detail-body>button { display: flex; align-items: center; gap: 9px; width: 100%; padding: 10px 6px; border: 0; border-radius: 6px; background: none; color: #c7d0e6; text-align: left; }
+.starfield-relations>button:hover, .starfield-directory .starfield-detail-body>button:hover { background: #242d47; }
+.starfield-relations>button>span { min-width: 0; flex: 1; }.starfield-relations strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; font-weight: 400; }.starfield-relations small { display: block; margin-top: 4px; color: #a6b5d3; font-size: 10px; }
+.starfield-directory h3 { font-size: 12px; margin: 0; }.starfield-directory .starfield-detail-body { padding: 8px; }.starfield-directory .starfield-detail-body>button { font-size: 11px; }.starfield-directory .starfield-detail-body>button>span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.starfield-dot { display: inline-block; flex-shrink: 0; width: 5px; height: 5px; border-radius: 50%; background: #b7bdd4; }
+.starfield-dot.memory { background: #c1a8ff; box-shadow: 0 0 6px rgb(193 168 255 / 40%); }.starfield-dot.event { background: #8ed4ee; }.starfield-dot.group { background: #d3ddf4; }
+.starfield-dot.historical { box-sizing: border-box; width: 6px; height: 6px; border: 1px solid #e6bb7b; background: transparent; box-shadow: none; }
+.starfield-footer { display: flex; align-items: center; justify-content: space-between; gap: 15px; padding: 13px 24px; border-top: 1px solid var(--star-rule); background: #080d1c; font-size: 10px; color: #a1aec9; }
+.starfield-legend { display: flex; align-items: center; gap: 13px; flex-shrink: 0; }.starfield-legend>span { display: flex; align-items: center; gap: 6px; }.starfield-footer p { margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.starfield-update-time { white-space: nowrap; font-size: 9px; color: #a1aec9; }.starfield-demo { display: inline-flex; align-items: center; gap: 6px; padding: 4px 0; border: 0; background: none; color: #d0bef5; white-space: nowrap; font-size: 10px; }
+.starfield-loading { display: flex; align-items: center; justify-content: center; gap: 10px; height: 100%; color: #a4b1cf; background: #080d1c; font-size: 12px; }
+.memory-starfield ::selection { background: #534478; color: #fff; }
+@keyframes starfield-detail-enter { from { opacity: 0; transform: translateX(12px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes starfield-tooltip-enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes starfield-shimmer { 0%, 100% { opacity: .32; transform: scale(.9); } 50% { opacity: 1; transform: scale(1.08); } }
+@keyframes starfield-core-breathe { 0%, 100% { opacity: .68; } 50% { opacity: 1; } }
+@container (max-width: 620px) {
+  .starfield-heading { padding: 18px 17px 15px; }.starfield-heading h2 { font-size: 14px; gap: 9px; }.starfield-heading p { font-size: 10px; }.starfield-count { gap: 5px; }.starfield-count strong { font-size: 19px; }.starfield-count span { font-size: 9px; }
+  .starfield-toolbar { padding: 0 15px 13px; gap: 5px; flex-wrap: wrap; }.starfield-search { max-width: none; flex-basis: 100%; height: 32px; }.starfield-toolbar select { margin-right: auto; max-width: 50%; height: 27px; }.starfield-history-toggle { font-size: 10px; height: 27px; }
+  .starfield-footer { gap: 10px; padding: 11px 15px; flex-wrap: wrap; }.starfield-update-time { display: none; }.starfield-detail { top: auto; bottom: 63px; right: 12px; left: 12px; width: auto; max-width: none; max-height: 54%; }.starfield-detail header { padding: 10px 14px; }.starfield-detail-body { padding: 12px 14px; }.starfield-canvas-note { left: 16px; font-size: 9px; }.starfield-map-controls { bottom: 14px; }.starfield-node-label { font-size: 11px; }
+}
+@media (prefers-reduced-motion: reduce) { .memory-starfield * { animation: none!important; transition: none!important; } }

@@ -1,69 +1,32 @@
+import {SettingsWorkspace} from './features/settings/SettingsWorkspace';
+import {FeedbackBanner} from './components/FeedbackBanner';
+import type {ClientUpdateResult} from './features/settings/client-release';
 import { DatePicker } from './components/DatePicker';
-import { StyledSelect } from './components/ui';
 import { CapabilityCenter } from './features/capabilities/CapabilityCenter';
+import { DocumentPreview } from './features/agent/DocumentPreview';
+import type {ComputerApi,NavigationRequest,NavigationTarget} from './features/agent/interaction-types';
 import { ChatModelSelect } from './features/conversations/ChatModelSelect';
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import {
-  Archive,
-  AlertTriangle,
-  BookOpen,
-  Brain,
-  Check,
-  ChevronDown,
-  ChevronRight,
-  Circle,
-  Database,
-  Download,
-  FileText,
-  Folder,
-  FolderKanban,
-  History,
-  House,
-  KeyRound,
-  LoaderCircle,
-  Maximize2,
-  MessageSquare,
-  Mic,
-  Minimize2,
-  Network,
-  Paperclip,
-  Pencil,
-  Plus,
-  RefreshCw,
-  RotateCcw,
-  Search,
-  Send,
-  Settings,
-  ShieldCheck,
-  Sparkles,
-  TableProperties,
-  Trash2,
-  Upload,
-  Volume2,
-  Eye,
-  X,
-  ZoomIn,
-  ZoomOut
-} from 'lucide-react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { Archive, AlertTriangle, BookOpen, Check, ChevronDown, ChevronRight, Circle, Database, FileText, FolderKanban, LoaderCircle, Maximize2, Network, Paperclip, Pencil, Plus, RotateCcw, Search, ShieldCheck, Sparkles, TableProperties, Trash2, Upload, X, ZoomIn, ZoomOut } from 'lucide-react';
 import { api } from './api';
-import { ConversationHistory } from './features/conversations/ConversationHistory';
 import { TaskWorkspace } from './features/tasks/TaskWorkspace';
 import { sortActionTasks } from './features/tasks/task-view';
 import { AppIconButton, FormSelect } from './components/ui';
-import { ChatAnalysis, ConversationCitations, ConversationWorkspace, MarkdownAnswer, TaskBatchSuggestionCard, TaskSuggestionCard } from './features/conversations/ConversationWorkspace';
+import { ConversationWorkspace, MarkdownAnswer, type WorkbenchPanel } from './features/conversations/ConversationWorkspace';
+import {useWorkbenchDraft, useWorkbenchTabs} from './features/conversations/useWorkbenchTabs';
+import {documentTabId, workbenchPageTitles, type DocumentEvidence, type WorkbenchPage, type WorkbenchTab} from './features/conversations/workbench-tabs';
 import { MemoryWorkspace as MemoryWorkspaceFeature } from './features/memories/MemoryWorkspace';
-import { CompanionSettings } from './features/companion/CompanionSettings';
 import type { CompanionApi } from './features/companion/types';
-import xiaoEAvatar from './assets/xiao-e-avatar.png';
-import type { AppSettings, ChatAnalysisStep, ChatCitation, ChatMessage, ConversationSummary, DocumentRecord, HomeData, MemoryRecord, MemorySuggestion, Priority, Project, ProjectSuggestion, StoredConversation, Task, TaskBatchSuggestion, TaskStatus, TaskSuggestion } from './types';
+import type { AppSettings, ChatAnalysisStep, ChatCitation, ChatMessage, DocumentRecord, HomeData, MemorySuggestion, Priority, Project, ProjectSuggestion, StoredConversation, Task, TaskBatchSuggestion, TaskStatus, TaskSuggestion } from './types';
+import { version as CLIENT_VERSION } from '../package.json';
+import './theme/refined-workbench.css';
 
-type Page = 'tasks' | 'home' | 'projects' | 'knowledge' | 'memory' | 'conversations' | 'trash' | 'settings';
-const CLIENT_VERSION = '1.0.0';
-type ClientRelease = { version: string; filename: string; sha256: string; size: number; publishedAt: string; downloadUrl: string };
-type ClientUpdateResult = { status: 'up-to-date' | 'installing'; release: ClientRelease };
+const MemoryStarfield=lazy(()=>import('./features/memories/MemoryStarfield'));
+
+type Page = WorkbenchPage | 'conversations';
 declare global {
   interface Window {
-    aiSecretary?: { installLatestUpdate: () => Promise<ClientUpdateResult>; companion: CompanionApi };
+    aiSecretary?: { installLatestUpdate: () => Promise<ClientUpdateResult>; companion: CompanionApi;computer?:ComputerApi };
   }
 }
 type ProjectTab = 'tasks' | 'documents';
@@ -79,14 +42,6 @@ async function fileAsBase64(file: File) {
   });
 }
 
-function isNewerClientVersion(candidate: string, current: string) {
-  const candidateParts = candidate.split('.').map((part) => Number.parseInt(part, 10) || 0);
-  const currentParts = current.split('.').map((part) => Number.parseInt(part, 10) || 0);
-  for (let index = 0; index < Math.max(candidateParts.length, currentParts.length); index += 1) {
-    if ((candidateParts[index] || 0) !== (currentParts[index] || 0)) return (candidateParts[index] || 0) > (currentParts[index] || 0);
-  }
-  return false;
-}
 interface LongJobState {
   kind: LongJobKind;
   status: 'running' | 'complete' | 'error' | 'cancelled';
@@ -128,13 +83,6 @@ const taskStatusOptions: ReadonlyArray<{ value: TaskStatus; label: string }> = [
 const taskExecutorOptions: ReadonlyArray<{ value: Task['executor']; label: string }> = [
   { value: 'self', label: '我自己' }, { value: 'ai', label: 'AI 秘书' }, { value: 'external', label: '外部人员' }
 ];
-const memoryTypeOptions: ReadonlyArray<{ value: string; label: string }> = [
-  { value: 'decision', label: '决定' }, { value: 'lesson', label: '经验' }, { value: 'preference', label: '偏好' }, { value: 'fact', label: '事实' }, { value: 'product_principle', label: '产品原则' }, { value: 'technical_constraint', label: '技术约束' }, { value: 'product_decision', label: '产品决定' }, { value: 'other', label: '其他' }
-];
-function formatDate(value: string | null) {
-  if (!value) return '未设置';
-  return new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric' }).format(new Date(value));
-}
 
 function formatDateTime(value: string) {
   return new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(value));
@@ -195,11 +143,25 @@ function ProjectSwitcher({ projects, selectedProjectId, onSelect }: { projects: 
 
 
 export function App() {
-  const firstRunHandled = useRef(false);
+  const navigationGeneration=useRef(0);
+  const voiceActivityGeneration=useRef(0);
+  const navigateRef=useRef<(request:NavigationRequest)=>Promise<void>>(async()=>{});
+  const voiceActivityRef=useRef<(event:{conversationId:string;runId?:string})=>void>(()=>{});
+  const deviceIdRef=useRef<string|undefined>(undefined);
+  const focusRef=useRef<NavigationTarget>({kind:'page',id:'conversations',title:'工作台'});
+  useEffect(()=>{const computer=window.aiSecretary?.computer;void window.aiSecretary?.companion.getConfig().then(config=>{deviceIdRef.current=config.deviceId;});if(!computer)return;const offNavigation=computer.onNavigate(request=>{void navigateRef.current(request);});const offActivity=computer.onVoiceActivity(event=>voiceActivityRef.current(event));return()=>{offNavigation();offActivity();};},[]);
   const [quickEditTask, setQuickEditTask] = useState<Task | null>(null);
-  const [page, setPage] = useState<Page>('projects');
-  useEffect(() => window.aiSecretary?.companion.onOpenSettings(() => setPage('settings')), []);
-  const surfaceRef = useRef<HTMLElement>(null);
+  const workbench = useWorkbenchTabs();
+  const workbenchActiveRef=useRef<WorkbenchTab|null>(null);
+  workbenchActiveRef.current=workbench.active??null;
+  const page: Page = workbench.active?.kind === 'page' ? workbench.active.page : 'conversations';
+  const previewDocumentId = workbench.active?.kind === 'document' ? workbench.active.documentId : null;
+  const workbenchPanel: WorkbenchPanel = !workbench.active ? null : workbench.active.kind === 'page' || workbench.active.kind === 'document' ? 'resource' : workbench.active.kind;
+  const setWorkbenchPanel = useCallback((panel: WorkbenchPanel) => {
+    if (!panel) workbench.hide();
+    else if (panel === 'transcript' || panel === 'results') workbench.open({id: panel, kind: panel, title: panel === 'transcript' ? '聊天记录' : '成果与进展'});
+  }, [workbench.hide, workbench.open]);
+  useEffect(() => window.aiSecretary?.companion.onOpenSettings(() => {workbench.open({id: 'page:settings', kind: 'page', page: 'settings', title: '设置'});}), [workbench.open]);
   const [homeTab, setHomeTab] = useState<HomeTab>('canvas');
   const [homeData, setHomeData] = useState<HomeData | null>(null);
   const [projectTab, setProjectTab] = useState<ProjectTab>('tasks');
@@ -208,12 +170,10 @@ export function App() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
-  const [memories, setMemories] = useState<MemoryRecord[]>([]);
-  const [memoryFilter, setMemoryFilter] = useState<'all' | MemoryRecord['status']>('all');
   const [chatOpen, setChatOpen] = useState(false);
   const [chatInput, setChatInput] = useState('');
   const chatDraftsRef = useRef<Record<string, string>>({});
-  const activeChatDraftKeyRef = useRef('new:home');
+  const activeChatDraftKeyRef = useRef('new:conversations:global');
   const [chatBusy, setChatBusy] = useState(false);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const chatController = useRef<AbortController | null>(null);
@@ -221,12 +181,6 @@ export function App() {
   const chatRun = useRef<{ view: number; messages: ChatMessage[]; conversationId: string | null; projectId: string | null; draftKey: string; unread: boolean; mode: 'local-retrieval' | 'local-fallback' | 'openai'; compressedAt: string | null } | null>(null);
   const [chatCompletion, setChatCompletion] = useState<{ id: string; title: string } | null>(null);
   const [loading, setLoading] = useState(true);
-  useEffect(() => {
-    if (loading || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-    const surface = surfaceRef.current?.querySelector<HTMLElement>('.project-page, .focus-page, .knowledge-page, .conversation-page, .settings-page, .trash-page');
-    const animation = surface?.animate([{ opacity: 0.45, transform: 'translateY(5px)' }, { opacity: 1, transform: 'translateY(0)' }], { duration: 240, easing: 'cubic-bezier(0.16, 1, 0.3, 1)' });
-    return () => animation?.cancel();
-  }, [page, loading]);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showTaskForm, setShowTaskForm] = useState(false);
@@ -237,20 +191,10 @@ export function App() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [chatMode, setChatMode] = useState<'local-retrieval' | 'local-fallback' | 'openai'>('local-retrieval');
   const [conversationId, setConversationId] = useState<string | null>(null);
-  const [conversationHistory, setConversationHistory] = useState<ConversationSummary[]>([]);
-  const [allConversationHistory, setAllConversationHistory] = useState<ConversationSummary[]>([]);
-  const [collapsedConversationGroups, setCollapsedConversationGroups] = useState<Record<string, boolean>>({});
   const [conversationProjectId, setConversationProjectId] = useState<string>('global');
-  const [conversationDocuments, setConversationDocuments] = useState<DocumentRecord[]>([]);
-  const [referencedDocumentPaths, setReferencedDocumentPaths] = useState<string[]>([]);
   const [chatModel, setChatModel] = useState('');
-  const [chatRoutingMode,setChatRoutingMode]=useState<'auto'|'work'|'life'>('auto');
   const [chatReasoningEffort, setChatReasoningEffort] = useState<AppSettings['reasoningEffort']>('auto');
-  const [chatMaxTokens, setChatMaxTokens] = useState('');
   const [compressedAt, setCompressedAt] = useState<string | null>(null);
-  const [compressBusy, setCompressBusy] = useState(false);
-  const [showConversationHistory, setShowConversationHistory] = useState(false);
-  const [historyBusy, setHistoryBusy] = useState(false);
   const [conversationLoadBusy, setConversationLoadBusy] = useState(false);
   const conversationLoadRequestRef = useRef(0);
   const [longJob, setLongJob] = useState<LongJobState | null>(null);
@@ -304,37 +248,14 @@ export function App() {
     setDocuments(documentData);
   }, []);
 
-  const loadMemories = useCallback(async () => {
-    const query = memoryFilter === 'all' ? '' : `?status=${memoryFilter}`;
-    setMemories(await api.get<MemoryRecord[]>(`/memories${query}`));
-  }, [memoryFilter]);
-
   const loadSettings = useCallback(async () => {
-    const initialSettings = await api.get<AppSettings>('/settings');
-    setSettings(initialSettings);
-    if (!firstRunHandled.current) { firstRunHandled.current = true; if (!initialSettings.apiBaseUrl || !initialSettings.model) { setPage('settings'); setNotice('欢迎使用 Housekeeper 用户端。当前在本机运行，请先填写自己的模型地址、API Key 和模型名称；也可以先使用项目与待办。'); } }
+    setSettings(await api.get<AppSettings>('/settings'));
   }, []);
 
   const loadHomeData = useCallback(async () => {
     setHomeData(await api.get<HomeData>('/home'));
   }, []);
 
-  const loadAllConversationHistory = useCallback(async () => {
-    setAllConversationHistory(await api.get<ConversationSummary[]>('/conversations?scope=all'));
-  }, []);
-
-  const importConversationOffice = useCallback(async (file: File) => {
-    try {
-      const result = await api.post<{ document: DocumentRecord; filename: string; warnings: string[] }>('/knowledge/import-office', { filename: file.name, contentBase64: await fileAsBase64(file), ...(conversationProjectId === 'global' ? {} : { projectId: conversationProjectId }) });
-      const endpoint = conversationProjectId === 'global' ? '/knowledge/documents' : `/projects/${encodeURIComponent(conversationProjectId)}/documents`;
-      setConversationDocuments(await api.get<DocumentRecord[]>(endpoint));
-      setNotice(`${result.filename} 已解析并加入本轮引用。`);
-      return result.document;
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Office 文件导入失败。');
-      throw reason;
-    }
-  }, [conversationProjectId]);
 
   useEffect(() => {
     setLoading(true);
@@ -354,26 +275,10 @@ export function App() {
   }, [loadProjectData, selectedProjectId]);
 
   useEffect(() => {
-    if (page !== 'memory') return;
-    loadMemories().catch((reason: Error) => setError(reason.message));
-  }, [loadMemories, page]);
-
-  useEffect(() => {
     if (page !== 'settings' && page !== 'knowledge') return;
     loadSettings().catch((reason: Error) => setError(reason.message));
   }, [loadSettings, page]);
 
-  useEffect(() => {
-    if (page !== 'conversations') return;
-    loadAllConversationHistory().catch((reason: Error) => setError(reason.message));
-  }, [loadAllConversationHistory, page]);
-
-  useEffect(() => {
-    if (page !== 'conversations') return;
-    const endpoint = conversationProjectId === 'global' ? '/knowledge/documents' : `/projects/${encodeURIComponent(conversationProjectId)}/documents`;
-    api.get<DocumentRecord[]>(endpoint).then(setConversationDocuments).catch((reason: Error) => setError(reason.message));
-    setReferencedDocumentPaths([]);
-  }, [conversationProjectId, page]);
 
   useEffect(() => {
     if (!notice) return;
@@ -407,43 +312,6 @@ export function App() {
       failed: Number(event.failed ?? current?.failed ?? 0),
       startedAt: current?.startedAt ?? Date.now()
     }));
-  };
-
-  const startKnowledgeScan = async (vaultPath: string) => {
-    if (longJob?.status === 'running') {
-      setNotice('已有资料任务正在后台运行，请等待完成或先停止。');
-      return;
-    }
-    const controller = new AbortController();
-    longJobController.current = controller;
-    setLongJob({ kind: 'knowledge', status: 'running', stage: 'starting', message: '正在准备读取资料库…', current: 0, total: 0, indexed: 0, chunks: 0, failed: 0, startedAt: Date.now() });
-    try {
-      if (vaultPath.trim() !== settings?.vaultPath) setSettings(await api.patch<AppSettings>('/settings', { vaultPath: vaultPath.trim() }));
-      await api.stream('/knowledge/scan/stream', {}, (event) => {
-        updateLongJobFromEvent('knowledge', event);
-        if (event.type === 'complete') {
-          const result = event.result as { indexed: number; chunks: number; failed: unknown[]; settings: AppSettings };
-          setSettings(result.settings);
-          loadProjects().catch((reason: Error) => setError(reason.message));
-          loadHomeData().catch((reason: Error) => setError(reason.message));
-          setLongJob((current) => current ? { ...current, status: 'complete', stage: 'completed', message: `资料库更新完成：${result.indexed} 篇文档，${result.chunks} 个检索片段`, indexed: result.indexed, chunks: result.chunks, failed: result.failed.length } : current);
-          setNotice(`资料库已更新：${result.indexed} 篇文档${result.failed.length ? `，${result.failed.length} 篇读取失败` : ''}。`);
-        } else if (event.type === 'error' || event.type === 'cancelled') {
-          const cancelled = event.type === 'cancelled';
-          setLongJob((current) => current ? { ...current, status: cancelled ? 'cancelled' : 'error', message: String(event.message ?? (cancelled ? '读取已停止' : '资料读取失败')) } : current);
-        }
-      }, controller.signal);
-    } catch (reason) {
-      if ((reason as Error).name === 'AbortError') {
-        setLongJob((current) => current ? { ...current, status: 'cancelled', message: '读取已停止。已完成的文件会保留，下次可以继续。' } : current);
-      } else {
-        const message = reason instanceof Error ? reason.message : '资料读取失败。';
-        setLongJob((current) => current ? { ...current, status: 'error', message } : current);
-        setError(message);
-      }
-    } finally {
-      if (longJobController.current === controller) longJobController.current = null;
-    }
   };
 
   const startProjectSuggestionScan = async () => {
@@ -502,29 +370,15 @@ export function App() {
     run.unread = false;
     setChatCompletion(null);
     setConversationProjectId(run.projectId ?? 'global');
-    setPage('conversations');
+    setWorkbenchPanel('transcript');
     setChatOpen(false);
-    setShowConversationHistory(false);
   };
 
   const switchPage = (nextPage: Page) => {
-    if (nextPage === 'conversations' && chatRun.current && (chatController.current || chatRun.current.unread)) {
-      restoreRunningChat();
-      return;
-    }
-    activateChatDraft(nextPage === 'conversations'
-      ? conversationId ? `conversation:${conversationId}` : newChatDraftKey('conversations', conversationProjectId)
-      : newChatDraftKey(nextPage, nextPage === 'projects' ? selectedProjectId : null));
-    setPage(nextPage);
+    navigationGeneration.current++;
+    if (nextPage === 'conversations') setWorkbenchPanel('transcript');
+    else workbench.open({id: `page:${nextPage}`, kind: 'page', page: nextPage, title: workbenchPageTitles[nextPage]});
     setChatOpen(false);
-    if (nextPage === 'conversations') {
-      setShowConversationHistory(false);
-      return;
-    }
-    setChatMessages([]);
-    setChatMode('local-retrieval');
-    setConversationId(null);
-    setShowConversationHistory(false);
   };
 
   const selectProject = (id: string | null) => {
@@ -535,36 +389,25 @@ export function App() {
     }
     setEditingTaskId(null);
     setShowTaskForm(false);
-    activateChatDraft(newChatDraftKey('projects', id));
     setSelectedProjectId(id);
     setProjectTab('tasks');
-    setChatMessages([]);
-    setConversationId(null);
-    setShowConversationHistory(false);
   };
 
-  const startNewConversation = (draftKey = newChatDraftKey(page, page === 'conversations' ? conversationProjectId : selectedProjectId)) => {
-    setChatRoutingMode('auto');
+  const startNewConversation = (draftKey = newChatDraftKey('conversations', 'global')) => {
     conversationLoadRequestRef.current += 1;
     setConversationLoadBusy(false);
     activateChatDraft(draftKey);
     setChatMessages([]);
     setConversationId(null);
-    setShowConversationHistory(false);
     setChatMode('local-retrieval');
     setCompressedAt(null);
+    setConversationProjectId('global');
   };
 
   const startConversationPageChat = () => {
-    setPage('conversations');
+    setWorkbenchPanel('transcript');
     setChatOpen(false);
-    startNewConversation(newChatDraftKey('conversations', conversationProjectId));
-  };
-
-  const changeConversationProject = (projectId: string) => {
-    if (projectId === conversationProjectId) return;
-    setConversationProjectId(projectId);
-    startNewConversation(newChatDraftKey('conversations', projectId));
+    startNewConversation();
   };
 
   const openConversationFromSidebar = async (id: string) => {
@@ -578,73 +421,15 @@ export function App() {
       const conversation = await api.get<StoredConversation>(`/conversations/${id}`);
       if (requestId !== conversationLoadRequestRef.current) return;
       activateChatDraft(`conversation:${conversation.id}`);
-      setPage('conversations');
+      setWorkbenchPanel('transcript');
       setChatOpen(false);
-      setConversationProjectId(conversation.scope === 'project' && conversation.projectId ? conversation.projectId : 'global');
+      setConversationProjectId(conversation.channel==='voice'?conversation.businessProjectId??'global':conversation.scope==='project'&&conversation.projectId?conversation.projectId:'global');
       setChatMessages(conversation.messages);
       setConversationId(conversation.id);
       setCompressedAt(conversation.compressedAt ?? null);
       setChatMode('local-retrieval');
     } catch (reason) {
       if (requestId === conversationLoadRequestRef.current) setError(reason instanceof Error ? reason.message : '对话恢复失败。');
-    } finally {
-      if (requestId === conversationLoadRequestRef.current) setConversationLoadBusy(false);
-    }
-  };
-
-  const compressConversation = async () => {
-    if (!conversationId || compressBusy) return;
-    setCompressBusy(true);
-    try {
-      const result = await api.post<{ compressedAt: string; originalMessageCount: number }>(`/conversations/${conversationId}/compress`);
-      setCompressedAt(result.compressedAt);
-      await loadAllConversationHistory();
-      setNotice(`已压缩 ${result.originalMessageCount} 条消息，原始记录仍然保留。`);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '对话压缩失败。');
-    } finally {
-      setCompressBusy(false);
-    }
-  };
-
-  const openConversationHistory = async () => {
-    if (page === 'settings' || page === 'knowledge' || (page === 'projects' && !selectedProjectId)) return;
-    setShowConversationHistory(true);
-    setHistoryBusy(true);
-    try {
-      const query = page === 'projects' ? `?scope=project&projectId=${encodeURIComponent(selectedProjectId!)}` : '?scope=memory';
-      setConversationHistory(await api.get<ConversationSummary[]>(`/conversations${query}`));
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '对话历史读取失败。');
-    } finally {
-      setHistoryBusy(false);
-    }
-  };
-
-  const resumeConversation = async (id: string) => {
-    if (chatController.current && chatRun.current?.conversationId === id) {
-      restoreRunningChat();
-      return;
-    }
-    const requestId = ++conversationLoadRequestRef.current;
-    setShowConversationHistory(false);
-    setConversationLoadBusy(true);
-    try {
-      const conversation = await api.get<StoredConversation>(`/conversations/${id}`);
-      if (requestId !== conversationLoadRequestRef.current) return;
-      const expectedScope = page === 'projects' ? 'project' : 'memory';
-      const expectedProject = page === 'projects' ? selectedProjectId : null;
-      if (conversation.scope !== expectedScope || conversation.projectId !== expectedProject) throw new Error('这段对话不属于当前范围。');
-      activateChatDraft(`conversation:${conversation.id}`);
-      setChatMessages(conversation.messages);
-      setConversationId(conversation.id);
-      setShowConversationHistory(false);
-      setChatMode('local-retrieval');
-    } catch (reason) {
-      if (requestId === conversationLoadRequestRef.current) {
-        setShowConversationHistory(true);
-        setError(reason instanceof Error ? reason.message : '对话恢复失败。');
-      }
     } finally {
       if (requestId === conversationLoadRequestRef.current) setConversationLoadBusy(false);
     }
@@ -727,8 +512,6 @@ export function App() {
       await api.delete(`/projects/${selectedProjectId}`, { confirmationName });
       setEditingProject(false);
       setChatOpen(false);
-      setChatMessages([]);
-      setConversationId(null);
       await loadProjects();
       setNotice('项目已移入回收站。任务、对话、记忆和 Obsidian 文档都还在。');
     } catch (reason) {
@@ -746,17 +529,6 @@ export function App() {
       setNotice('项目已恢复，原来的任务、对话、记忆和资料索引都可以继续使用。');
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '项目恢复失败。');
-    }
-  };
-
-  const updateMemory = async (memory: MemoryRecord, changes: Partial<Pick<MemoryRecord, 'content' | 'memoryType' | 'status'>>) => {
-    try {
-      await api.patch(`/memories/${memory.id}`, changes);
-      await Promise.all([loadMemories(), loadProjects(), selectedProjectId ? loadProjectData(selectedProjectId) : Promise.resolve()]);
-      setNotice(changes.status === 'confirmed' ? '这条记忆已确认，以后的回答可以引用它。' : changes.status === 'invalidated' ? '这条记忆已失效，以后的回答不会再引用它。' : '记忆已保存。');
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '记忆更新失败。');
-      throw reason;
     }
   };
 
@@ -790,35 +562,67 @@ export function App() {
     event.preventDefault();
     const message = chatInput.trim();
     if (!message || chatController.current) return;
+    const turnReasoningEffort=chatReasoningEffort;
+    setChatReasoningEffort('auto');
     const streamId = `stream-${Date.now()}`;
+    const userKey = `${streamId}-user`;
+    const sentAt = new Date().toISOString();
     const controller = new AbortController();
     chatController.current = controller;
-    const activeProjectId = page === 'projects' ? selectedProjectId : page === 'conversations' && conversationProjectId !== 'global' ? conversationProjectId : null;
-    const run = { view: chatViewVersion.current, messages: [...chatMessages, { role: 'user', content: message }, { role: 'assistant', content: '', citations: [], analysisSteps: [], createdAt: streamId }] as ChatMessage[], conversationId, projectId: activeProjectId, draftKey: activeChatDraftKeyRef.current, unread: false, mode: chatMode, compressedAt };
+    // Retain a legacy conversation's archive key; business routing remains automatic.
+    const archiveProjectId = conversationId && conversationProjectId !== 'global' ? conversationProjectId : null;
+    const run = { view: chatViewVersion.current, messages: [...chatMessages, { role: 'user', content: message, createdAt: sentAt, clientKey: userKey }, { role: 'assistant', content: '', citations: [], analysisSteps: [], clientKey: streamId }] as ChatMessage[], conversationId, projectId: archiveProjectId, draftKey: activeChatDraftKeyRef.current, unread: false, mode: chatMode, compressedAt };
     chatRun.current = run;
     setChatCompletion(null);
     setChatMessages(run.messages);
     updateChatInput('');
     setChatBusy(true);
     const updateStreamingMessage = (updater: (message: ChatMessage) => ChatMessage) => {
-      run.messages = run.messages.map((item) => item.createdAt === streamId ? updater(item) : item);
+      run.messages = run.messages.map((item) => item.clientKey === streamId ? updater(item) : item);
       if (run.view === chatViewVersion.current) setChatMessages(run.messages);
     };
-    const activeScope = activeProjectId ? 'project' : 'memory';
+    const reconcileSavedTimestamps = (savedConversationId: string, savedAssistantId: string) => {
+      void api.get<StoredConversation>(`/conversations/${encodeURIComponent(savedConversationId)}`).then((stored) => {
+        const assistantIndex = stored.messages.findIndex((item) => item.id === savedAssistantId);
+        const assistant = stored.messages[assistantIndex];
+        if (!assistant?.createdAt) return;
+        const user = stored.messages.slice(0, assistantIndex).reverse().find((item) => item.role === 'user' && item.content === message);
+        const apply = (item: ChatMessage): ChatMessage => item.clientKey === streamId
+          ? { ...item, id: assistant.id, createdAt: assistant.createdAt }
+          : item.clientKey === userKey && user?.createdAt ? { ...item, id: user.id, createdAt: user.createdAt } : item;
+        run.messages = run.messages.map(apply);
+        setChatMessages((current) => current.some((item) => item.clientKey === streamId) ? current.map(apply) : current);
+      }).catch(() => undefined);
+    };
     try {
+      const cameraFrame=await window.aiSecretary?.companion.captureCameraFrame?.(message).catch(()=>null);
+      controller.signal.throwIfAborted();
       await api.stream('/chat/stream', {
         message,
-        projectId: activeProjectId,
-        scope: activeScope,
+        ...(cameraFrame?{cameraFrame}:{}),
+        projectId: archiveProjectId,
+        scope: archiveProjectId ? 'project' : 'memory',
+        projectRouting: 'auto',
         conversationId,
+        interactionMode:'text',
         clientVersion: CLIENT_VERSION,
+        inputId: crypto.randomUUID(),
+        agentRuntime: true,
+        deviceId:deviceIdRef.current,interactionContext:{focus:focusRef.current},
         model: chatModel || undefined,
-        routingMode: page === 'conversations' ? chatRoutingMode : 'auto',
-        reasoningEffort: page === 'conversations' ? chatReasoningEffort : settings?.reasoningEffort ?? 'auto',
-        maxTokens: page === 'conversations' && chatMaxTokens.trim() ? Number(chatMaxTokens) : null,
-        documentPaths: page === 'conversations' ? referencedDocumentPaths : []
+        routingMode: 'auto',
+        reasoningEffort: turnReasoningEffort,
+        documentPaths: []
       }, (streamEvent) => {
-        if (streamEvent.type === 'analysis') {
+        if(streamEvent.type==='agent-run'){
+          updateStreamingMessage(item=>({...item,runId:String(streamEvent.runId)}));
+          run.conversationId=String(streamEvent.conversationId);
+          if(run.view===chatViewVersion.current)setConversationId(run.conversationId);
+        }else if(streamEvent.type==='run-event'){
+          if((streamEvent.event as {type?:string})?.type==='navigation_requested')void navigateRef.current((streamEvent.event as {detail:NavigationRequest}).detail);
+          const event=streamEvent.event as {seq:number;label:string;type:string};
+          updateStreamingMessage(item=>({...item,analysisSteps:[...(item.analysisSteps??[]),{id:`run:${event.seq}`,label:event.label,status:['tool_unknown','tool_failed','failed'].includes(event.type)?'warning':'done'}]}));
+        }else if (streamEvent.type === 'analysis') {
           const step: ChatAnalysisStep = { id: String(streamEvent.id), label: String(streamEvent.label), status: streamEvent.status as ChatAnalysisStep['status'], detail: streamEvent.detail ? String(streamEvent.detail) : undefined };
           updateStreamingMessage((item) => ({ ...item, analysisSteps: [...(item.analysisSteps ?? []).filter((existing) => existing.id !== step.id), step] }));
         } else if (streamEvent.type === 'citations') {
@@ -829,11 +633,14 @@ export function App() {
           updateStreamingMessage((item) => ({
             ...item,
             content: String(streamEvent.answer ?? item.content),
+            runId:typeof streamEvent.runId==='string'?streamEvent.runId:item.runId,
+            runStatus:streamEvent.runStatus as ChatMessage['runStatus'],
             citations: streamEvent.citations as ChatCitation[],
             memorySuggestion: streamEvent.memorySuggestion as MemorySuggestion | null,
             taskSuggestion: streamEvent.taskSuggestion as TaskSuggestion | null,
             taskBatchSuggestion: streamEvent.taskBatchSuggestion as TaskBatchSuggestion | null,
-            suggestionId: streamEvent.suggestionId as string | null
+            suggestionId: streamEvent.suggestionId as string | null,
+            createdAt: typeof streamEvent.assistantMessageAt === 'string' ? streamEvent.assistantMessageAt : new Date().toISOString()
           }));
           const nextConversationId = String(streamEvent.conversationId);
           run.conversationId = nextConversationId;
@@ -848,16 +655,16 @@ export function App() {
             run.unread = true;
             setChatCompletion({ id: nextConversationId, title: message.slice(0, 28) });
           }
-          void loadAllConversationHistory().catch(() => undefined);
+          if (typeof streamEvent.assistantMessageId === 'string') reconcileSavedTimestamps(nextConversationId, streamEvent.assistantMessageId);
         } else if (streamEvent.type === 'error' || streamEvent.type === 'cancelled') {
-          updateStreamingMessage((item) => ({ ...item, content: item.content || String(streamEvent.message ?? '回答已停止。') }));
+          updateStreamingMessage((item) => ({ ...item, content: item.content || String(streamEvent.message ?? '回答已停止。'), createdAt: new Date().toISOString() }));
           if (run.view !== chatViewVersion.current) setNotice(String(streamEvent.message ?? '后台回答已停止。'));
         }
       }, controller.signal);
     } catch (reason) {
-      if ((reason as Error).name === 'AbortError') updateStreamingMessage((item) => ({ ...item, content: item.content || '回答已停止。' }));
+      if ((reason as Error).name === 'AbortError') updateStreamingMessage((item) => ({ ...item, content: item.content || '回答已停止。', createdAt: new Date().toISOString() }));
       else {
-        updateStreamingMessage((item) => ({ ...item, content: reason instanceof Error ? reason.message : '对话失败。' }));
+        updateStreamingMessage((item) => ({ ...item, content: reason instanceof Error ? reason.message : '对话失败。', createdAt: new Date().toISOString() }));
         if (run.view !== chatViewVersion.current) setNotice('后台回答中断，请返回聊天重试。');
       }
     } finally {
@@ -866,61 +673,69 @@ export function App() {
     }
   };
 
-  const renameHistoryConversation = async (id: string, title: string) => {
-    await api.patch(`/conversations/${encodeURIComponent(id)}`, { title });
-    setAllConversationHistory(current => current.map(item => item.id === id ? { ...item, title } : item));
-    setConversationHistory(current => current.map(item => item.id === id ? { ...item, title } : item));
-  };
-  const deleteHistoryConversation = async (id: string) => {
-    if (chatRun.current?.conversationId === id) {
-      chatController.current?.abort();
-      chatRun.current = null;
-      setChatCompletion(null);
-    }
-    await api.delete(`/conversations/${encodeURIComponent(id)}`);
-    setAllConversationHistory(current => current.filter(item => item.id !== id));
-    setConversationHistory(current => current.filter(item => item.id !== id));
-    delete chatDraftsRef.current[`conversation:${id}`];
-    if (conversationId === id) {
-      conversationLoadRequestRef.current += 1;
-      chatViewVersion.current += 1;
-      setConversationId(null); setChatMessages([]); setCompressedAt(null); setConversationLoadBusy(false);
-      activeChatDraftKeyRef.current = newChatDraftKey('conversations', conversationProjectId);
-      setChatInput(chatDraftsRef.current[activeChatDraftKeyRef.current] ?? '');
-    }
+  const stopChat = () => {
+    const runId=chatRun.current?.messages.at(-1)?.runId,controller=chatController.current;
+    if(runId)void api.post(`/agent/runs/${encodeURIComponent(runId)}/control`,{action:'pause'}).catch(reason=>setError(reason.message)).finally(()=>controller?.abort());
+    else controller?.abort();
   };
 
-  const stopChat = () => chatController.current?.abort();
+  const continueOfficeRun=async(runId:string,message?:string)=>{
+    if(chatController.current)throw new Error('当前事务仍在处理，请先等待或暂停。');
+    const view=chatViewVersion.current,controller=new AbortController(),key=crypto.randomUUID();
+    const run={view,messages:[...chatMessages,{role:'assistant' as const,content:'',runId,clientKey:key}],conversationId,projectId:conversationProjectId==='global'?null:conversationProjectId,draftKey:activeChatDraftKeyRef.current,unread:false,mode:chatMode,compressedAt};
+    chatRun.current=run;chatController.current=controller;setChatBusy(true);setChatMessages(run.messages);
+    const update=(change:(item:ChatMessage)=>ChatMessage)=>{run.messages=run.messages.map(item=>item.clientKey===key?change(item):item);if(chatViewVersion.current===view)setChatMessages(run.messages);};
+    try{
+      await api.stream(`/agent/runs/${encodeURIComponent(runId)}/continue`,{message},event=>{
+        if(event.type==='delta')update(item=>({...item,content:item.content+String(event.delta??'')}));
+        else if(event.type==='run-event'){const step=event.event as {seq:number;label:string;type?:string;detail?:NavigationRequest};if(step.type==='navigation_requested'&&step.detail)void navigateRef.current(step.detail);update(item=>({...item,analysisSteps:[...(item.analysisSteps??[]),{id:`run:${step.seq}`,label:step.label,status:'done'}]}));}
+        else if(event.type==='done'){run.conversationId=String(event.conversationId);update(item=>({...item,content:String(event.answer??item.content),runStatus:event.runStatus as ChatMessage['runStatus']}));}
+        else if(event.type==='error')throw new Error(String(event.message??'继续处理未完成，进度已保留。'));
+      },controller.signal);
+      if(run.conversationId){const stored=await api.get<StoredConversation>(`/conversations/${encodeURIComponent(run.conversationId)}`);run.messages=stored.messages;if(chatViewVersion.current===view)setChatMessages(stored.messages);}
+    }catch(reason){if((reason as Error).name==='AbortError')update(item=>({...item,content:item.content||'已暂停，进度已保留。'}));else{update(item=>({...item,content:reason instanceof Error?reason.message:'继续处理未完成。'}));throw reason;}}
+    finally{if(chatController.current===controller)chatController.current=null;setChatBusy(false);}
+  };
 
   const openTasks = tasks.filter((task) => task.status !== 'done' && task.status !== 'cancelled');
+  const openWorkbenchDocument = (documentId: string, version?: number, evidence?: DocumentEvidence, title = '文档原文') => {
+    navigationGeneration.current++;
+    workbench.open({id: documentTabId(documentId, version, evidence), kind: 'document', documentId, version, evidence, title});
+  };
+  const currentFocus:NavigationTarget=workbenchPanel!=='resource'?{kind:'page',id:'conversations',title:'工作台'}:previewDocumentId?{kind:'document',id:previewDocumentId,title:workbench.active?.title??'当前文档'}:page==='tasks'&&quickEditTask?{kind:'task',id:quickEditTask.id,title:quickEditTask.title}:page==='projects'&&selectedProjectId?{kind:'project',id:selectedProjectId,title:selectedProject?.name??'当前项目'}:{kind:'page',id:page,title:workbench.active?.title??'当前页面'};
+  focusRef.current=currentFocus;
+  useEffect(()=>{void window.aiSecretary?.computer?.setFocus(currentFocus).catch(()=>{});},[page,workbenchPanel,previewDocumentId,quickEditTask?.id,selectedProjectId,workbench.active?.id,workbench.active?.title]);
+  navigateRef.current=async request=>{
+    const generation=++navigationGeneration.current;let shown=false;
+    try{
+      const target=request.target;
+      if(target.kind==='document'&&target.id){const document=await api.get<{title:string}>('/knowledge/documents/'+encodeURIComponent(target.id));if(generation!==navigationGeneration.current)return;openWorkbenchDocument(target.id,undefined,undefined,document.title);shown=true;}
+      else if(target.kind==='project'&&target.id){await api.get('/projects/'+encodeURIComponent(target.id)+'/overview');await loadProjects();if(generation!==navigationGeneration.current)return;selectProject(target.id);switchPage('projects');shown=true;}
+      else if(target.kind==='task'&&target.id){const all=await api.get<HomeData>('/home');if(generation!==navigationGeneration.current)return;const task=all.tasks.find(task=>task.id===target.id);if(task){setHomeData(all);switchPage('tasks');setQuickEditTask(task);shown=true;}}
+      else if(target.kind==='page'&&['home','projects','tasks','knowledge','memory','conversations','capabilities','trash','settings'].includes(target.id??'')){switchPage(target.id as Page);shown=true;}
+      if(shown){focusRef.current=target;const committed=navigationGeneration.current;await new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve())));if(committed!==navigationGeneration.current)shown=false;}
+    }catch(reason){if(generation===navigationGeneration.current)setError(reason instanceof Error?reason.message:'页面未能打开。');}
+    finally{await api.post('/interaction/navigation/'+encodeURIComponent(request.id)+'/ack',{token:request.token,shown}).catch(()=>{});}
+  };
+  voiceActivityRef.current=event=>{
+    const generation=++voiceActivityGeneration.current,view=chatViewVersion.current;
+    if(!chatController.current)void api.get<StoredConversation>('/conversations/'+encodeURIComponent(event.conversationId)).then(stored=>{
+      if(chatController.current||generation!==voiceActivityGeneration.current||view!==chatViewVersion.current)return;
+      const projectId=stored.channel==='voice'?stored.businessProjectId??'global':stored.scope==='project'&&stored.projectId?stored.projectId:'global';
+      if(activeChatDraftKeyRef.current!=='conversation:'+stored.id)activateChatDraft('conversation:'+stored.id);
+      setChatMessages(stored.messages);setConversationId(stored.id);setConversationProjectId(projectId);setCompressedAt(stored.compressedAt??null);setChatMode('openai');
+      if(stored.messages.at(-1)?.role==='assistant')workbench.open({id:'transcript',kind:'transcript',title:'聊天记录',attention:true},Boolean(workbenchActiveRef.current));
+    }).catch(()=>{});
+  };
   const doneTasks = tasks.filter((task) => task.status === 'done');
 
-  return (
-    <div className={`app-frame ${page === 'conversations' ? 'conversation-mode' : ''}`}>
-      <a className="skip-link" href="#main-content">跳到主要内容</a>
-      <aside className="rail">
-        <div className="brand-mark" aria-label="AI 秘书"><img src={xiaoEAvatar} width="28" height="28" alt="" /><span>AI 秘书</span></div>
-        <p className="rail-caption">给工作以秩序，给想法以空间</p>
-        <nav className="primary-nav" data-active-page={page} aria-label="主要功能">
-          <span className="nav-glider" aria-hidden="true" />
-          {([{ id: 'projects', label: '项目管理', icon: FolderKanban }, { id: 'tasks', label: '待办事项', icon: Check }, { id: 'knowledge', label: '个人知识库', icon: BookOpen }, { id: 'conversations', label: '聊天陪伴', icon: MessageSquare }] as const).map(item => <button key={item.id} aria-label={item.label} aria-current={page === item.id ? 'page' : undefined} className={page === item.id ? 'active' : ''} onClick={() => switchPage(item.id)}><item.icon size={18} /><span>{item.label}</span></button>)}
-        </nav>
-        {page === 'conversations' ? <ConversationHistory busyConversationId={chatBusy ? conversationId : null} onRename={renameHistoryConversation} onDelete={deleteHistoryConversation} projects={projects} conversations={allConversationHistory} activeConversationId={conversationId} collapsedGroups={collapsedConversationGroups} onToggleGroup={(key) => setCollapsedConversationGroups((current) => ({ ...current, [key]: !current[key] }))} onOpen={openConversationFromSidebar} onNew={startConversationPageChat} /> : <div className="rail-note"><span>小E · 你的日常伙伴</span><p>推进一个项目，记录一个想法，或只是聊聊今天。</p><button type="button" onClick={() => switchPage('conversations')}>和小E聊聊 <ChevronRight size={14} /></button></div>}
-        <div className="rail-footer">
-          {page !== 'conversations' ? <button aria-label="项目回收站" className={page === 'trash' ? 'active' : ''} type="button" onClick={() => switchPage('trash')}><Trash2 size={17} /><span>项目回收站</span>{deletedProjects.length > 0 ? <span className="nav-count">{deletedProjects.length}</span> : null}</button> : null}
-          <button aria-label="设置" className={page === 'settings' ? 'active' : ''} type="button" onClick={() => switchPage('settings')}><Settings size={17} /><span>设置</span></button>
-        </div>
-      </aside>
-
-      <div className={`workspace ${chatOpen ? 'chat-visible' : ''}`}>
-        <main className="main-surface" id="main-content" ref={surfaceRef}>
-          {error || notice || chatCompletion ? <div className="toast-stack" aria-live="polite" aria-atomic="true">
-            {chatCompletion ? <div className="feedback-toast" role="status"><Check size={17} aria-hidden="true" /><span>小E已回复：{chatCompletion.title}</span><button type="button" onClick={() => { void openConversationFromSidebar(chatCompletion.id); setChatCompletion(null); }}>查看</button></div> : null}
-            {error ? <div className="feedback-toast" role="alert" key={error}><AlertTriangle size={17} aria-hidden="true" /><span>{error}</span></div> : null}
-            {notice ? <div className="feedback-toast" role="status" key={notice}><Check size={17} aria-hidden="true" /><span>{notice}</span></div> : null}
-          </div> : null}
-          {longJob ? <LongJobBanner job={longJob} onStop={stopLongJob} onDismiss={() => setLongJob(null)} onOpen={() => switchPage(longJob.kind === 'knowledge' ? 'knowledge' : 'projects')} /> : null}
-          {loading ? <LoadingState /> : page === 'home' ? (
+  const renderResourceTab = (tab: WorkbenchTab) => {
+    if (tab.kind === 'document') return <DocumentPreview inline documentId={tab.documentId} version={tab.version} evidence={tab.evidence} onTitleChange={title => workbench.title(tab.id, `${title}${tab.version ? ` · v${tab.version}` : ''}${tab.evidence ? ' · 引用片段' : ''}`)} onClose={() => workbench.close(tab.id)}/>;
+    if (tab.kind !== 'page') return null;
+    const resourcePage = tab.page;
+    if(resourcePage==='memory-starfield')return <Suspense fallback={<div className="starfield-loading" role="status">正在展开记忆星空…</div>}><MemoryStarfield onOpenDocument={id=>openWorkbenchDocument(id)} onOpenChat={()=>setWorkbenchPanel('transcript')}/></Suspense>;
+    return (
+resourcePage === 'home' ? (
             <HomeWorkspace
               data={homeData}
               tab={homeTab}
@@ -928,7 +743,7 @@ export function App() {
               onOpenProject={(projectId) => { selectProject(projectId); switchPage('projects'); }}
               onOpenKnowledge={() => switchPage('knowledge')}
             />
-          ) : page === 'projects' ? (
+          ) : resourcePage === 'projects' ? (
             <ProjectWorkspace
               projects={projects}
               selectedProject={selectedProject}
@@ -969,86 +784,63 @@ export function App() {
               onUpdateProject={updateProject}
               onDeleteProject={deleteProject}
             />
-          ) : page === 'tasks' ? (
+          ) : resourcePage === 'tasks' ? (
             <><TaskWorkspace tasks={homeData?.tasks ?? []} projects={projects} onRefresh={refreshSelectedProject} onToggle={toggleTask} onError={setError} onEdit={setQuickEditTask} onOpenProject={(id) => { selectProject(id); switchPage('projects'); }} />{quickEditTask ? <QuickTaskEditor key={quickEditTask.id} task={quickEditTask} onClose={() => setQuickEditTask(null)} onSave={updateTask} /> : null}</>
-          ) : page === 'knowledge' ? (
-            <KnowledgeWorkspace projects={projects} settings={settings} job={longJob?.kind === 'knowledge' ? longJob : null} onSaved={setSettings} onNotice={setNotice} onError={setError} onScan={startKnowledgeScan} onStop={stopLongJob} />
-          ) : page === 'memory' ? (
+          ) : resourcePage === 'knowledge' ? (
+            <KnowledgeWorkspace projects={projects} settings={settings} onNotice={setNotice} onError={setError} />
+          ) : resourcePage === 'memory' ? (
             <MemoryWorkspaceFeature
-              memories={memories}
-              filter={memoryFilter}
-              onFilter={setMemoryFilter}
-              onUpdate={updateMemory}
-              onOpenChat={() => setChatOpen(true)}
-              onRefresh={loadMemories}
+              onOpenChat={() => setWorkbenchPanel('transcript')}
             />
-          ) : page === 'conversations' ? (
-            <ConversationWorkspace
-              modelSelector={<ChatModelSelect value={chatModel} onChange={setChatModel} defaultModel={settings?.model ?? ''} baseUrl={settings?.apiBaseUrl ?? ''} disabled={chatBusy} />}
-              routingModeSelector={<label className="conversation-routing-control"><span>模式</span><StyledSelect aria-label="本轮对话模式" title="可逐轮切换，不改变当前对话和项目范围" value={chatRoutingMode} disabled={conversationLoadBusy} onChange={event=>setChatRoutingMode(event.target.value as 'auto'|'work'|'life')}><option value="auto">自动识别</option><option value="work">工作</option><option value="life">生活</option></StyledSelect></label>}
-              projects={projects}
-              projectId={conversationProjectId}
-              onProjectChange={changeConversationProject}
-              reasoningEffort={chatReasoningEffort}
-              onReasoningEffortChange={setChatReasoningEffort}
-              maxTokens={chatMaxTokens}
-              onMaxTokensChange={setChatMaxTokens}
-              documents={conversationDocuments}
-              referencedDocumentPaths={referencedDocumentPaths}
-              onReferencedDocumentPathsChange={setReferencedDocumentPaths}
-              onImportOffice={importConversationOffice}
+          ) : resourcePage==='capabilities'?<div className="settings-page surface-page capabilities-page"><CapabilityCenter hideHeading/></div>:resourcePage === 'trash' ? (
+            <TrashWorkspace projects={deletedProjects} onRestore={restoreProject} />
+          ) : <SettingsWorkspace settings={settings} onSaved={(next) => { setSettings(next); setNotice('设置已保存。'); }} onError={setError} />
+  );
+  };
+
+  return (
+    <div data-page={page} className="app-frame voice-first command-shell spectrum-shell refined-shell orbital-shell conversation-mode">
+      {import.meta.env.DEV&&import.meta.env.VITE_WORKBENCH_PREVIEW==='1'?<div className="preview-notice" role="status">本地验收预览 · 示例资料与模拟回答 · 未连接个人服务器</div>:null}
+      <a className="skip-link" href="#main-content">跳到主要内容</a>
+      <div className="feedback-stack" id="workbench-feedback">
+        {chatCompletion ? <FeedbackBanner tone="success" action={<button className="text-button" type="button" onClick={() => { void openConversationFromSidebar(chatCompletion.id); setChatCompletion(null); }}>查看</button>} onDismiss={() => setChatCompletion(null)}>希微已回复：{chatCompletion.title}</FeedbackBanner> : null}
+        {error ? <FeedbackBanner tone="error" key={`error:${error}`} onDismiss={() => setError(null)}>{error}</FeedbackBanner> : null}
+        {notice ? <FeedbackBanner tone="success" key={`notice:${notice}`} onDismiss={() => setNotice(null)}>{notice}</FeedbackBanner> : null}
+      </div>
+      <div className={`workspace ${chatOpen ? 'chat-visible' : ''}`}>
+        <main className="main-surface" id="main-content">
+          {longJob ? <LongJobBanner job={longJob} onStop={stopLongJob} onDismiss={() => setLongJob(null)} onOpen={() => switchPage(longJob.kind === 'knowledge' ? 'knowledge' : 'projects')} /> : null}
+          {loading?<LoadingState/>:(<ConversationWorkspace
+              modelSelector={<ChatModelSelect value={chatModel} onChange={setChatModel} defaultModel={settings?.model ?? ''} baseUrl={settings?.apiBaseUrl ?? ''} disabled={chatBusy} reasoningEffort={chatReasoningEffort} onReasoningEffortChange={setChatReasoningEffort} />}
+              workbench={{...workbench,select:id=>{navigationGeneration.current++;workbench.select(id);},hide:()=>{navigationGeneration.current++;workbench.hide();},close:id=>{navigationGeneration.current++;workbench.close(id);}}}
+              onPanelChange={setWorkbenchPanel}
+              renderResourceTab={renderResourceTab}
+              onOpenSettings={()=>switchPage('settings')}
+              onOpenCapabilities={()=>switchPage('capabilities')}
+              onOpenMemoryStarfield={()=>switchPage('memory-starfield')}
               messages={chatMessages}
               input={chatInput}
               busy={chatBusy}
               conversationLoadBusy={conversationLoadBusy}
-              responseMode={chatMode}
               conversationId={conversationId}
-              compressedAt={compressedAt}
-              compressBusy={compressBusy}
               onInput={updateChatInput}
               onSend={sendChat}
               onStop={stopChat}
-              onCompress={compressConversation}
-              onNew={startNewConversation}
+              onNew={startConversationPageChat}
               onSaveTaskSuggestion={saveTaskSuggestion}
               onSaveTaskBatchSuggestion={saveTaskBatchSuggestion}
-            />
-          ) : page === 'trash' ? (
-            <TrashWorkspace projects={deletedProjects} onRestore={restoreProject} />
-          ) : <SettingsWorkspace settings={settings} onSaved={(next) => { setSettings(next); setNotice('设置已保存。'); }} onError={setError} />}
+              onContinueRun={continueOfficeRun}
+              onOpenDocument={openWorkbenchDocument}
+              onBusinessChanged={refreshSelectedProject}
+            />)}
         </main>
-
-        {page !== 'conversations' ? <ChatPanel
-          open={chatOpen}
-          scopeLabel={page === 'projects' ? selectedProject?.name ?? '当前项目' : page === 'home' ? '全部项目与资料' : '全部已确认记忆'}
-          mode={page}
-          messages={chatMessages}
-          input={chatInput}
-          busy={chatBusy}
-          responseMode={chatMode}
-          conversationId={conversationId}
-          history={conversationHistory}
-          historyOpen={showConversationHistory}
-          historyBusy={historyBusy}
-          conversationLoadBusy={conversationLoadBusy}
-          onInput={updateChatInput}
-          onSend={sendChat}
-          onStop={stopChat}
-          onNewConversation={startNewConversation}
-          onOpenHistory={openConversationHistory}
-          onCloseHistory={() => setShowConversationHistory(false)}
-          onResumeConversation={resumeConversation}
-          onSaveTaskSuggestion={saveTaskSuggestion}
-          onSaveTaskBatchSuggestion={saveTaskBatchSuggestion}
-          onClose={() => setChatOpen(false)}
-        /> : null}
       </div>
     </div>
   );
 }
 
 function LoadingState() {
-  return <div className="loading-state"><LoaderCircle className="spin" size={22} /><span>正在启动 AI 秘书…</span></div>;
+  return <div className="loading-state" role="status"><LoaderCircle className="spin" size={16} aria-hidden="true"/><span>正在准备工作台…</span></div>;
 }
 
 type HomeCanvasNode = {
@@ -1333,16 +1125,14 @@ function LongJobDetail({ job }: { job: LongJobState }) {
   </div>;
 }
 
-function KnowledgeWorkspace({ projects, settings, job, onSaved, onNotice, onError, onScan, onStop }: { projects: Project[]; settings: AppSettings | null; job: LongJobState | null; onSaved: (settings: AppSettings) => void; onNotice: (message: string) => void; onError: (message: string) => void; onScan: (vaultPath: string) => Promise<void>; onStop: () => void }) {
-  const [tab, setTab] = useState<'overview' | 'documents'>('documents');
+function KnowledgeWorkspace({ projects, settings, onNotice, onError }: { projects: Project[]; settings: AppSettings | null; onNotice: (message: string) => void; onError: (message: string) => void; }) {
+  const tab = 'documents';
   const [documentScope, setDocumentScope] = useState<'all' | string>('all');
   const [documentQuery, setDocumentQuery] = useState('');
   const documentRequest = useRef(0);
-  const [vaultPath, setVaultPath] = useState(settings?.vaultPath ?? '');
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
   const [busy, setBusy] = useState(false);
   const [documentsBusy, setDocumentsBusy] = useState(false);
-  const [semanticBusy, setSemanticBusy] = useState(false);
   const [selectedDocument, setSelectedDocument] = useState<DocumentRecord | null>(null);
   const [editingDocument, setEditingDocument] = useState(false);
   const [creatingDocument, setCreatingDocument] = useState(false);
@@ -1350,8 +1140,8 @@ function KnowledgeWorkspace({ projects, settings, job, onSaved, onNotice, onErro
   const [documentContent, setDocumentContent] = useState('');
   const [importBusy, setImportBusy] = useState(false);
   const officeInput = useRef<HTMLInputElement>(null);
+  useWorkbenchDraft('knowledge', Boolean(editingDocument && (documentTitle !== (creatingDocument ? '' : selectedDocument?.title ?? '') || documentContent !== (creatingDocument ? '' : selectedDocument?.content ?? ''))), busy || importBusy);
 
-  useEffect(() => { if (settings) setVaultPath(settings.vaultPath); }, [settings]);
   useEffect(() => {
     if (tab !== 'documents') return;
     setDocumentsBusy(true);
@@ -1363,31 +1153,6 @@ function KnowledgeWorkspace({ projects, settings, job, onSaved, onNotice, onErro
   }, [documentScope, onError, tab, settings?.knowledgeDocumentCount]);
 
   if (!settings) return <LoadingState />;
-
-  const savePath = async () => {
-    setBusy(true);
-    try {
-      const next = await api.patch<AppSettings>('/settings', { vaultPath: vaultPath.trim() });
-      onSaved(next);
-      onNotice('资料库位置已保存。');
-    } catch (reason) {
-      onError(reason instanceof Error ? reason.message : '资料库位置保存失败。');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const buildSemanticIndex = async () => {
-    setSemanticBusy(true);
-    try {
-      const result = await api.post<{ chunks: number; model: string; dimension: number }>('/knowledge/semantic-index');
-      onNotice(`语义索引已完成：${result.chunks} 个片段，${result.model} · ${result.dimension} 维。`);
-    } catch (reason) {
-      onError(reason instanceof Error ? reason.message : '语义索引建立失败。');
-    } finally {
-      setSemanticBusy(false);
-    }
-  };
 
   const reloadDocuments = async () => {
     const endpoint = documentScope === 'all' ? '/knowledge/documents' : `/projects/${encodeURIComponent(documentScope)}/documents`;
@@ -1433,19 +1198,19 @@ function KnowledgeWorkspace({ projects, settings, job, onSaved, onNotice, onErro
     setImportBusy(true);
     try {
       const contentBase64 = await fileAsBase64(file);
-      const result = await api.post<{ document: DocumentRecord; filename: string; warnings: string[]; stats: Record<string, number> }>('/knowledge/import-office', { filename: file.name, contentBase64, ...(documentScope === 'all' ? {} : { projectId: documentScope }) });
+      const result = await api.post<{ document: DocumentRecord; filename: string; warnings: string[]; stats: Record<string, number> }>('/knowledge/import-file', { filename: file.name, contentBase64, ...(documentScope === 'all' ? {} : { projectId: documentScope }) });
       await reloadDocuments();
       await openDocument(result.document.id);
       const warning = result.warnings.length ? `，有 ${result.warnings.length} 条格式提示` : '';
       onNotice(`${result.filename} 已解析并加入知识库${warning}。`);
-    } catch (reason) { onError(reason instanceof Error ? reason.message : 'Office 文件导入失败。'); }
+    } catch (reason) { onError(reason instanceof Error ? reason.message : '文件导入失败。'); }
     finally { setImportBusy(false); }
   };
 
   if (!settings) return <LoadingState />;
 
   return <div className="knowledge-page surface-page">
-    <header className="page-header"><div><h1>个人知识库</h1><p>留住有用的资料，让零散的想法慢慢连成线。</p></div><div className="page-header-actions"><input ref={officeInput} className="visually-hidden" type="file" accept=".docx,.xlsx,.pptx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation" onChange={importOffice} /><button className="secondary-button" type="button" disabled={importBusy} onClick={() => officeInput.current?.click()}>{importBusy ? <LoaderCircle className="spin" size={16} /> : <Upload size={16} />}{importBusy ? '正在解析…' : '导入 Office'}</button><button className="primary-button" type="button" onClick={() => { documentRequest.current += 1; setDocumentsBusy(false); setSelectedDocument(null); setDocumentTitle(''); setDocumentContent(''); setCreatingDocument(true); setEditingDocument(true); }}><Plus size={16} />新建文档</button></div></header>
+    <header className="page-header"><div><h1>个人知识库</h1><p>留住有用的资料，让零散的想法慢慢连成线。</p></div><div className="page-header-actions"><input ref={officeInput} className="visually-hidden" type="file" accept=".docx,.xlsx,.pptx,.pdf,.txt,.md,.markdown,.json,.jsonc,.ts,.tsx,.js,.jsx,.mjs,.cjs,.py,.java,.c,.h,.cpp,.hpp,.cs,.go,.rs,.sql,.yaml,.yml,.toml,.ini,.csv,.xml,.html,.css,.sh,.ps1" onChange={importOffice} /><button className="secondary-button" type="button" disabled={importBusy} onClick={() => officeInput.current?.click()}>{importBusy ? <LoaderCircle className="spin" size={16} /> : <Upload size={16} />}{importBusy ? '正在解析…' : '上传文件'}</button><button className="primary-button" type="button" onClick={() => { documentRequest.current += 1; setDocumentsBusy(false); setSelectedDocument(null); setDocumentTitle(''); setDocumentContent(''); setCreatingDocument(true); setEditingDocument(true); }}><Plus size={16} />新建文档</button></div></header>
     <section className="subpage-panel knowledge-browser server-knowledge-browser">
       <aside className="knowledge-scope" aria-label="文档范围"><div className="knowledge-scope-heading"><strong>查看范围</strong><span>{documents.length} 篇</span></div><FormSelect label="选择文档范围" value={documentScope} options={[{ value: 'all', label: '全部文档' }, ...projects.map((project) => ({ value: project.id, label: project.name }))]} onChange={(value) => { documentRequest.current += 1; setDocumentScope(value); setSelectedDocument(null); setCreatingDocument(false); setEditingDocument(false); }} /><label className="quiet-search knowledge-search"><Search size={16} /><input aria-label="搜索知识库" placeholder="搜索标题、路径或摘要" value={documentQuery} onChange={event => setDocumentQuery(event.target.value)} /></label><div className="knowledge-scope-buttons">{!documentsBusy && !documents.some(document => `${document.title} ${document.relativePath} ${document.excerpt}`.toLocaleLowerCase().includes(documentQuery.trim().toLocaleLowerCase())) ? <p className="knowledge-search-empty">{documents.length ? '没有匹配的文档，试试其他关键词。' : '这里还没有文档。'}</p> : null}{documents.filter(document => `${document.title} ${document.relativePath} ${document.excerpt}`.toLocaleLowerCase().includes(documentQuery.trim().toLocaleLowerCase())).map((document) => <button className={selectedDocument?.id === document.id ? 'active' : ''} type="button" key={document.id} onClick={() => void openDocument(document.id)}><FileText size={16} /><span><strong>{document.title}</strong><small>{formatDateTime(document.serverEditedAt ?? document.modifiedAt)}</small></span></button>)}</div></aside>
       <div className="knowledge-document-pane">
@@ -1456,296 +1221,6 @@ function KnowledgeWorkspace({ projects, settings, job, onSaved, onNotice, onErro
     </section>
   </div>;
 
-}
-
-function SettingsWorkspace({ settings, onSaved, onError }: { settings: AppSettings | null; onSaved: (settings: AppSettings) => void; onError: (message: string) => void }) {
-  const [connectionTab, setConnectionTab] = useState<'chat' | 'vision' | 'asr' | 'tts' | 'retrieval' | 'search'>('chat');
-  const previousSettings = useRef(settings);
-  const [section, setSection] = useState<'answer' | 'model' | 'companion' | 'capabilities' | 'update'>('model');
-  const [model, setModel] = useState(settings?.model ?? '');
-  const [visionModel, setVisionModel] = useState(settings?.visionModel ?? 'qwen3-vl-flash');
-  const [speechRecognitionModel, setSpeechRecognitionModel] = useState(settings?.speechRecognitionModel ?? 'qwen-audio-3.0-asr-flash');
-  const [speechSynthesisModel, setSpeechSynthesisModel] = useState(settings?.speechSynthesisModel ?? 'qwen-audio-3.0-tts-flash');
-  const [speechServiceBaseUrl, setSpeechServiceBaseUrl] = useState(settings?.speechServiceBaseUrl ?? '');
-  const [speechVoice, setSpeechVoice] = useState(settings?.speechVoice ?? 'longanhuan_v3.6');
-  const [speechInstruction, setSpeechInstruction] = useState(settings?.speechInstruction ?? '');
-  const [embeddingModel, setEmbeddingModel] = useState(settings?.embeddingModel ?? 'BAAI/bge-m3');
-  const [rerankerModel, setRerankerModel] = useState(settings?.rerankerModel ?? 'BAAI/bge-reranker-v2-m3');
-  const [apiBaseUrl, setApiBaseUrl] = useState(settings?.apiBaseUrl ?? '');
-  const [retrievalApiBaseUrl, setRetrievalApiBaseUrl] = useState(settings?.retrievalApiBaseUrl ?? 'https://api.siliconflow.cn/v1');
-  const [reasoningEffort, setReasoningEffort] = useState<AppSettings['reasoningEffort']>(settings?.reasoningEffort ?? 'auto');
-  const [webSearchPolicy, setWebSearchPolicy] = useState<AppSettings['webSearchPolicy']>(settings?.webSearchPolicy ?? 'ask');
-  const [aiEnabled, setAiEnabled] = useState(settings?.aiEnabled ?? false);
-  const [apiKey, setApiKey] = useState('');
-  const [retrievalApiKey, setRetrievalApiKey] = useState('');
-  const [webSearchApiKey, setWebSearchApiKey] = useState('');
-  const [availableModels, setAvailableModels] = useState<string[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [modelBusy, setModelBusy] = useState(false);
-  const [testResult, setTestResult] = useState<string | null>(null);
-  const [testFailed, setTestFailed] = useState(false);
-  const [release, setRelease] = useState<ClientRelease | null>(null);
-  const [releaseAction, setReleaseAction] = useState<'idle' | 'checking' | 'downloading'>('idle');
-  const [releaseMessage, setReleaseMessage] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!settings) return;
-    const previous = previousSettings.current;
-    setModel(current => current === previous?.model ? settings.model : current);
-    setVisionModel(current => current === previous?.visionModel ? settings.visionModel : current);
-    setSpeechRecognitionModel(current => current === previous?.speechRecognitionModel ? settings.speechRecognitionModel : current);
-    setSpeechSynthesisModel(current => current === previous?.speechSynthesisModel ? settings.speechSynthesisModel : current);
-    setSpeechServiceBaseUrl(current => current === previous?.speechServiceBaseUrl ? settings.speechServiceBaseUrl : current);
-    setSpeechVoice(current => current === previous?.speechVoice ? settings.speechVoice : current);
-    setSpeechInstruction(current => current === previous?.speechInstruction ? settings.speechInstruction : current);
-    setEmbeddingModel(current => current === previous?.embeddingModel ? settings.embeddingModel : current);
-    setRerankerModel(current => current === previous?.rerankerModel ? settings.rerankerModel : current);
-    setApiBaseUrl(current => current === previous?.apiBaseUrl ? settings.apiBaseUrl : current);
-    setRetrievalApiBaseUrl(current => current === previous?.retrievalApiBaseUrl ? settings.retrievalApiBaseUrl : current);
-    setReasoningEffort(current => current === previous?.reasoningEffort ? settings.reasoningEffort : current);
-    setWebSearchPolicy(current => current === previous?.webSearchPolicy ? settings.webSearchPolicy : current);
-    setAiEnabled(current => current === previous?.aiEnabled ? settings.aiEnabled : current);
-    previousSettings.current = settings;
-  }, [settings]);
-
-  if (!settings) return <LoadingState />;
-
-  const save = async (event: React.FormEvent) => {
-    event.preventDefault();
-    setBusy(true);
-    setTestResult(null); setTestFailed(false);
-    try {
-      const next = await api.patch<AppSettings>('/settings', section === 'answer' ? { webSearchPolicy, aiEnabled } : connectionTab === 'chat' ? { model, apiBaseUrl, reasoningEffort, ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}) } : connectionTab === 'vision' ? { visionModel } : connectionTab === 'asr' ? { speechRecognitionModel, speechServiceBaseUrl } : connectionTab === 'tts' ? { speechSynthesisModel, speechServiceBaseUrl, speechVoice, speechInstruction } : connectionTab === 'retrieval' ? { embeddingModel, rerankerModel, retrievalApiBaseUrl, ...(retrievalApiKey.trim() ? { retrievalApiKey: retrievalApiKey.trim() } : {}) } : { ...(webSearchApiKey.trim() ? { webSearchApiKey: webSearchApiKey.trim() } : {}) });
-      if (section === 'model') {
-        if (connectionTab === 'chat') setApiKey('');
-        if (connectionTab === 'retrieval') setRetrievalApiKey('');
-        if (connectionTab === 'search') setWebSearchApiKey('');
-      }
-      onSaved(next);
-    } catch (reason) {
-      onError(reason instanceof Error ? reason.message : '模型设置保存失败。');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const testConnection = async () => {
-    setBusy(true);
-    setTestResult(null); setTestFailed(false);
-    try {
-      let next = settings;
-      if (apiKey.trim() || model !== settings.model || apiBaseUrl !== settings.apiBaseUrl || reasoningEffort !== settings.reasoningEffort || !settings.aiEnabled) {
-        next = await api.patch<AppSettings>('/settings', { model, apiBaseUrl, reasoningEffort, aiEnabled: true, ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}) });
-        setAiEnabled(true);
-        setApiKey('');
-        onSaved(next);
-      }
-      const result = await api.post<{ message: string }>('/settings/test');
-      setTestResult(`连接正常：${result.message}`);
-    } catch (reason) {
-      setTestFailed(true);
-      setTestResult(reason instanceof Error ? reason.message : '连接测试失败。');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const detectModels = async () => {
-    setModelBusy(true);
-    setTestResult(null); setTestFailed(false);
-    try {
-      const result = await api.post<{ models: string[] }>('/settings/models', { apiBaseUrl, ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}) });
-      setAvailableModels(result.models);
-      if (result.models.length && !result.models.includes(model)) setModel(result.models[0]);
-      setTestResult(result.models.length ? `检测成功：找到 ${result.models.length} 个可用模型。` : '服务商没有返回模型列表，可以手动填写模型名称。');
-    } catch (reason) {
-      setTestFailed(true);
-      setTestResult(reason instanceof Error ? reason.message : '模型检测失败。');
-    } finally {
-      setModelBusy(false);
-    }
-  };
-
-  const testRetrievalConnection = async () => {
-    setBusy(true);
-    setTestResult(null); setTestFailed(false);
-    try {
-      let next = settings;
-      if (retrievalApiKey.trim() || retrievalApiBaseUrl !== settings.retrievalApiBaseUrl || embeddingModel !== settings.embeddingModel || rerankerModel !== settings.rerankerModel) {
-        next = await api.patch<AppSettings>('/settings', { retrievalApiBaseUrl, embeddingModel, rerankerModel, ...(retrievalApiKey.trim() ? { retrievalApiKey: retrievalApiKey.trim() } : {}) });
-        setRetrievalApiKey('');
-        onSaved(next);
-      }
-      const result = await api.post<{ message: string }>('/settings/test-retrieval');
-      setTestResult(`检索连接正常：${result.message}`);
-    } catch (reason) {
-      setTestFailed(true);
-      setTestResult(reason instanceof Error ? reason.message : '检索连接测试失败。');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const testWebSearchConnection = async () => {
-    setBusy(true);
-    setTestResult(null); setTestFailed(false);
-    try {
-      let next = settings;
-      if (webSearchApiKey.trim()) {
-        next = await api.patch<AppSettings>('/settings', { ...(webSearchApiKey.trim() ? { webSearchApiKey: webSearchApiKey.trim() } : {}) });
-        setWebSearchApiKey('');
-        onSaved(next);
-      }
-      const result = await api.post<{ message: string }>('/settings/test-web-search');
-      setTestResult(`搜索连接正常：${result.message}`);
-    } catch (reason) {
-      setTestFailed(true);
-      setTestResult(reason instanceof Error ? reason.message : '搜索连接测试失败。');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const clearSessionKey = async () => {
-    setBusy(true);
-    try {
-      const next = await api.patch<AppSettings>('/settings', { clearSessionKey: true, aiEnabled: false });
-      setAiEnabled(false);
-      setApiKey('');
-      setTestResult(null); setTestFailed(false);
-      onSaved(next);
-    } catch (reason) {
-      onError(reason instanceof Error ? reason.message : '密钥清除失败。');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const clearRetrievalKey = async () => {
-    setBusy(true);
-    try {
-      const next = await api.patch<AppSettings>('/settings', { clearRetrievalApiKey: true });
-      setRetrievalApiKey('');
-      setTestResult(null); setTestFailed(false);
-      onSaved(next);
-    } catch (reason) {
-      onError(reason instanceof Error ? reason.message : '检索密钥清除失败。');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const clearWebSearchKey = async () => {
-    setBusy(true);
-    try {
-      const next = await api.patch<AppSettings>('/settings', { clearWebSearchApiKey: true });
-      setWebSearchApiKey('');
-      setTestResult(null); setTestFailed(false);
-      onSaved(next);
-    } catch (reason) {
-      onError(reason instanceof Error ? reason.message : '搜索密钥清除失败。');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const checkLatestUpdate = async () => {
-    setReleaseAction('checking');
-    setReleaseMessage(null);
-    try {
-      const latest = await api.get<ClientRelease>('/releases/latest');
-      setRelease(latest);
-      setReleaseMessage(isNewerClientVersion(latest.version, CLIENT_VERSION) ? `发现新版本 ${latest.version}，可以下载安装。` : '当前已经是最新版。');
-    } catch (reason) {
-      setRelease(null);
-      onError(reason instanceof Error ? reason.message : '检查更新失败，请确认已连接服务器。');
-    } finally {
-      setReleaseAction('idle');
-    }
-  };
-
-  const installLatestUpdate = async () => {
-    if (!release || !isNewerClientVersion(release.version, CLIENT_VERSION)) return;
-    if (!window.aiSecretary) {
-      onError('请在安装版 AI 秘书中执行客户端更新。');
-      return;
-    }
-    setReleaseAction('downloading');
-    setReleaseMessage('正在下载安装包并校验，请不要关闭应用。');
-    try {
-      const result = await window.aiSecretary.installLatestUpdate();
-      setRelease(result.release);
-      setReleaseMessage(result.status === 'up-to-date' ? '当前已经是最新版。' : '安装包已准备完成，即将关闭应用并打开安装程序…');
-    } catch (reason) {
-      onError(reason instanceof Error ? reason.message : '下载安装包失败，请确认已连接服务器。');
-    } finally {
-      setReleaseAction('idle');
-    }
-  };
-
-  const keyState = settings.apiKeySource === 'environment' ? '电脑环境中已配置' : settings.apiKeySource === 'device' ? '已安全保存在本机' : settings.apiKeySource === 'session' ? '本次运行已配置' : '尚未配置';
-  const retrievalKeyState = settings.retrievalApiKeySource === 'fallback' ? '当前复用对话模型密钥' : settings.retrievalApiKeySource === 'environment' ? '电脑环境中已配置' : settings.retrievalApiKeySource === 'device' ? '已独立安全保存在本机' : settings.retrievalApiKeySource === 'session' ? '本次运行已独立配置' : '尚未配置';
-  const webSearchKeyState = settings.webSearchApiKeySource === 'environment' ? '电脑环境中已配置' : settings.webSearchApiKeySource === 'device' ? '已安全保存在本机' : settings.webSearchApiKeySource === 'session' ? '本次运行已配置' : '尚未配置';
-  const hasUsableRetrievalKey = Boolean(retrievalApiKey.trim()) || (settings.hasRetrievalApiKey && settings.retrievalApiKeySource !== 'fallback') || (retrievalApiBaseUrl.replace(/\/+$/, '') === apiBaseUrl.replace(/\/+$/, '') && settings.hasApiKey);
-  return <div className="settings-page surface-page">
-    <header className="page-header"><div><h1>设置</h1><p>管理回答策略、模型连接、桌面小E和客户端更新。</p></div></header>
-    <nav className="subpage-nav" aria-label="设置页面"><button className={section === 'answer' ? 'active' : ''} type="button" disabled={busy || modelBusy} onClick={() => setSection('answer')}>回答方式</button><button className={section === 'model' ? 'active' : ''} type="button" disabled={busy || modelBusy} onClick={() => setSection('model')}>模型连接</button><button className={section === 'companion' ? 'active' : ''} type="button" disabled={busy || modelBusy} onClick={() => setSection('companion')}>桌面小E</button><button className={section === 'capabilities' ? 'active' : ''} type="button" disabled={busy || modelBusy} onClick={() => setSection('capabilities')}>能力中心</button><button className={section === 'update' ? 'active' : ''} type="button" disabled={busy || modelBusy} onClick={() => setSection('update')}>客户端更新</button></nav>
-    {section === 'capabilities' ? <CapabilityCenter /> : section === 'companion' ? <div className="settings-form subpage-panel companion-settings-form"><CompanionSettings onError={onError} /></div> : <form className={`settings-form subpage-panel ${section === 'model' ? 'connection-form' : ''}`} onSubmit={save}>
-      {section === 'answer' ? <section className="settings-section single-setting-section">
-        <div className="settings-heading"><div><h2>回答方式</h2><p>先从服务器资料中找依据，再决定是否交给模型组织成可读结论。</p></div><span className={`connection-state ${settings.aiEnabled && settings.hasApiKey ? 'ready' : ''}`}>{settings.aiEnabled && settings.hasApiKey ? '大模型回答已开启' : '当前使用规则回答'}</span></div>
-        <label className="toggle-row"><div><strong>使用大模型组织回答</strong><span>关闭后仍可检索项目、资料和记忆，也不会向外部服务发送内容。</span></div><input type="checkbox" checked={aiEnabled} onChange={(event) => setAiEnabled(event.target.checked)} /></label>
-        <label className="policy-row"><div><strong>联网搜索策略</strong><span>规划问题始终先读取服务器资料；只有需要市场、竞品或最新信息时才考虑联网。</span></div><StyledSelect value={webSearchPolicy} onChange={(event) => setWebSearchPolicy(event.target.value as AppSettings['webSearchPolicy'])}><option value="off">关闭 · 仅使用服务器资料</option><option value="ask">询问后搜索（推荐）</option><option value="auto">自动搜索外部信息</option></StyledSelect></label>
-        <div className="settings-actions compact-actions"><span /><button className="primary-button" type="submit" disabled={busy}>{busy ? '正在保存…' : '保存回答方式'}</button></div>
-      </section> : section === 'update' ? <section className="settings-section single-setting-section">
-        <div className="settings-heading"><div><h2>Housekeeper 用户端</h2><p>当前版本 {CLIENT_VERSION}。与个人端使用独立的数据和更新渠道。</p></div></div>
-        <p>公开版本和安装包在 GitHub Releases 发布，下载后手动安装更新。</p>
-        <a className="primary-button" href="https://github.com/fuxian0928-sketch/housekeeper/releases" target="_blank" rel="noopener noreferrer">查看公开发行版本 ↗</a>
-      </section> : <section className="settings-section single-setting-section connection-settings">
-        <div className="settings-heading"><div><h2>模型连接</h2><p>填写你自己的模型服务。对话需要地址、API Key 和模型名；视觉、语音及检索可以稍后配置。</p></div><ShieldCheck size={19} /></div>
-        <div className="connection-layout">
-        <nav className="connection-nav" aria-label="连接类型">
-          {([{ id: 'chat', title: '对话模型', detail: '意图、回答与记忆', configured: settings.hasApiKey, icon: MessageSquare }, { id: 'vision', title: '视觉模型', detail: '按需理解摄像头画面', configured: settings.hasApiKey, icon: Eye }, { id: 'asr', title: '语音识别', detail: '把你的声音转成文字', configured: settings.hasApiKey && Boolean(settings.speechServiceBaseUrl), icon: Mic }, { id: 'tts', title: '语音合成', detail: '把小E的回答读出来', configured: settings.hasApiKey && Boolean(settings.speechServiceBaseUrl), icon: Volume2 }, { id: 'retrieval', title: '知识检索', detail: '查找资料与结果排序', configured: settings.hasRetrievalApiKey, icon: Search }, { id: 'search', title: '联网搜索', detail: '补充外部信息 · 可选', configured: settings.hasWebSearchApiKey, icon: Network }] as const).map(item => <button type="button" key={item.id} aria-pressed={connectionTab === item.id} disabled={busy || modelBusy} onClick={() => { setConnectionTab(item.id); setTestResult(null); setTestFailed(false); }}><item.icon size={18} /><span><strong>{item.title}</strong><small>{item.detail}</small><em>{item.configured ? '已可用' : '待配置'}</em></span></button>)}
-          <p><ShieldCheck size={14} />对话、视觉和语音共用百炼密钥，不需要重复填写。</p>
-        </nav>
-        <div className="connection-detail">
-        <fieldset className="settings-fields connection-fields" hidden={connectionTab !== 'chat'} disabled={connectionTab !== 'chat' || busy}>
-
-          <div className="settings-group-heading wide-setting"><h3>对话模型连接</h3><p>用于组织回答、生成项目建议和总结。</p></div>
-          <label className="wide-setting"><span>对话服务地址</span><input type="url" required maxLength={500} value={apiBaseUrl} onChange={(event) => setApiBaseUrl(event.target.value)} placeholder="例如：https://服务商地址/v1" /><small>填写对话模型服务商提供的 API Base URL，一般以 /v1 结尾。</small></label>
-          <label className="wide-setting"><span>对话 API Key</span><div className="secret-input"><KeyRound size={16} /><input type="password" autoComplete="off" maxLength={300} value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={settings.hasApiKey ? '已配置；留空表示不更换' : '粘贴当前设备的 API Key'} /></div><small>{keyState}。安装版使用 Windows 本机加密保存，不写入数据库、安装包或 Obsidian，也不会同步到其他电脑。</small></label>
-          <label><span>默认模型</span><div className="model-picker">{availableModels.length ? <StyledSelect value={model} onChange={(event) => setModel(event.target.value)}>{availableModels.map((item) => <option value={item} key={item}>{item}</option>)}</StyledSelect> : <input required maxLength={120} value={model} onChange={(event) => setModel(event.target.value)} placeholder="填写服务商提供的模型名" />}<button className="secondary-button" type="button" disabled={modelBusy || !apiBaseUrl.trim() || (!settings.hasApiKey && !apiKey.trim())} onClick={detectModels}>{modelBusy ? '检测中…' : '检测模型'}</button></div><small>{availableModels.length ? '已从服务商读取模型列表。' : '先填写地址和 Key，再检测服务商提供的模型。'}</small></label>
-          <label><span>思考深度</span><StyledSelect value={reasoningEffort} onChange={(event) => setReasoningEffort(event.target.value as AppSettings['reasoningEffort'])}><option value="auto">自动（推荐）</option><option value="low">低 · 响应更快</option><option value="medium">中 · 日常分析</option><option value="high">高 · 复杂问题</option></StyledSelect><small>“自动”由服务商决定；低、中、高会明确传给服务商。</small></label>
-          </fieldset><fieldset className="settings-fields connection-fields" hidden={connectionTab !== 'vision'} disabled={connectionTab !== 'vision' || busy}><div className="settings-group-heading wide-setting"><h3>视觉模型</h3><p>只在意图判断本轮需要看现场时上传一帧画面，原图不保存。</p></div>
-          <label className="wide-setting"><span>视觉模型 ID</span><input required maxLength={160} value={visionModel} onChange={event => setVisionModel(event.target.value)} placeholder="qwen3-vl-flash" /><small>性价比推荐 qwen3-vl-flash；需要更强细节理解时可换 qwen3-vl-plus。</small></label>
-          </fieldset><fieldset className="settings-fields connection-fields" hidden={connectionTab !== 'asr'} disabled={connectionTab !== 'asr' || busy}><div className="settings-group-heading wide-setting"><h3>语音识别</h3><p>录音会发送到百炼转写，服务器只保留识别后的文字对话。</p></div>
-          <label className="wide-setting"><span>百炼业务空间 API 根地址</span><input type="url" required maxLength={500} value={speechServiceBaseUrl} onChange={event => setSpeechServiceBaseUrl(event.target.value)} placeholder="https://业务空间ID.cn-beijing.maas.aliyuncs.com/api/v1" /><small>在百炼业务空间页复制 Workspace ID，替换地址中的“业务空间ID”。</small></label>
-          <label className="wide-setting"><span>识别模型 ID</span><input required maxLength={160} value={speechRecognitionModel} onChange={event => setSpeechRecognitionModel(event.target.value)} placeholder="qwen-audio-3.0-asr-flash" /><small>当前使用整句低延迟识别，推荐 qwen-audio-3.0-asr-flash。</small></label>
-          </fieldset><fieldset className="settings-fields connection-fields" hidden={connectionTab !== 'tts'} disabled={connectionTab !== 'tts' || busy}><div className="settings-group-heading wide-setting"><h3>语音合成</h3><p>用独立 TTS 模型播报小E回答，可随时更换音色和表现指令。</p></div>
-          <label className="wide-setting"><span>百炼业务空间 API 根地址</span><input type="url" required maxLength={500} value={speechServiceBaseUrl} onChange={event => setSpeechServiceBaseUrl(event.target.value)} placeholder="https://业务空间ID.cn-beijing.maas.aliyuncs.com/api/v1" /><small>与语音识别共用同一地址和对话 API Key。</small></label>
-          <label><span>合成模型 ID</span><input required maxLength={160} value={speechSynthesisModel} onChange={event => setSpeechSynthesisModel(event.target.value)} placeholder="qwen-audio-3.0-tts-flash" /><small>推荐 qwen-audio-3.0-tts-flash。</small></label>
-          <label><span>音色 ID</span><input required maxLength={120} value={speechVoice} onChange={event => setSpeechVoice(event.target.value)} placeholder="longanhuan_v3.6" /><small>填写系统音色、声音设计或声音复刻返回的 ID。</small></label>
-          <label className="wide-setting"><span>语气与表现</span><textarea rows={4} maxLength={500} value={speechInstruction} onChange={event => setSpeechInstruction(event.target.value)} placeholder="例如：温柔干练，自然口语化，语速稍快" /><small>用自然语言描述声线、语速、情绪和语气。</small></label>
-          </fieldset><fieldset className="settings-fields connection-fields" hidden={connectionTab !== 'retrieval'} disabled={connectionTab !== 'retrieval' || busy}><div className="settings-group-heading wide-setting"><h3>检索模型连接</h3><p>用于语义向量召回和结果重排，可以与对话模型使用不同服务商。</p></div>
-          <label className="wide-setting"><span>检索服务地址</span><input type="url" required maxLength={500} value={retrievalApiBaseUrl} onChange={(event) => setRetrievalApiBaseUrl(event.target.value)} placeholder="例如：https://api.siliconflow.cn/v1" /><small>填写支持 OpenAI Embeddings 接口和当前向量模型的服务地址。</small></label>
-          <label className="wide-setting"><span>检索 API Key</span><div className="secret-input"><KeyRound size={16} /><input type="password" autoComplete="off" maxLength={300} value={retrievalApiKey} onChange={(event) => setRetrievalApiKey(event.target.value)} placeholder={settings.retrievalApiKeySource === 'fallback' ? '当前复用对话 Key；填写后改为独立 Key' : settings.hasRetrievalApiKey ? '已独立配置；留空表示不更换' : '粘贴检索服务商的 API Key'} /></div><small>{retrievalKeyState}。独立 Key 使用另一份 Windows 本机加密文件保存。</small></label>
-          <label><span>语义向量模型</span><input required maxLength={160} value={embeddingModel} onChange={(event) => setEmbeddingModel(event.target.value)} placeholder="BAAI/bge-m3" /><small>默认使用 1024 维 BGE-M3；建立语义索引后用于同义表达召回。</small></label>
-          <label><span>重排模型</span><input required maxLength={160} value={rerankerModel} onChange={(event) => setRerankerModel(event.target.value)} placeholder="BAAI/bge-reranker-v2-m3" /><small>服务不支持 /rerank 时会自动降级为 RRF 排名。</small></label>
-          </fieldset><fieldset className="settings-fields connection-fields" hidden={connectionTab !== 'search'} disabled={connectionTab !== 'search' || busy}><div className="settings-group-heading wide-setting"><h3>外部搜索连接</h3><p>规划问题需要市场、竞品或最新信息时，通过 Tavily 搜索；不会上传完整 Obsidian 文档。</p></div>
-          <label className="wide-setting"><span>Tavily API Key</span><div className="secret-input"><KeyRound size={16} /><input type="password" autoComplete="off" maxLength={300} value={webSearchApiKey} onChange={(event) => setWebSearchApiKey(event.target.value)} placeholder={settings.hasWebSearchApiKey ? '已配置；留空表示不更换' : '粘贴当前设备的 Tavily API Key'} /></div><small>{webSearchKeyState}。使用独立的 Windows 本机加密文件保存，不写入数据库或 Obsidian。</small></label>
-        </fieldset>
-        {testResult ? <p className={`connection-result ${testFailed ? 'connection-error' : ''}`} role={testFailed ? 'alert' : 'status'}>{testResult}</p> : null}
-        <div className="connection-savebar">
-          <p>仅保存当前连接。{connectionTab === 'chat' && !settings.aiEnabled ? '测试时将开启大模型回答。' : '测试会先保存当前配置。'}</p>
-          <div className="connection-save-actions">
-            <div>{connectionTab === 'chat' && ['session', 'device'].includes(settings.apiKeySource) ? <button className="text-danger-button" type="button" disabled={busy || modelBusy} onClick={clearSessionKey}>清除对话密钥</button> : connectionTab === 'retrieval' && ['session', 'device'].includes(settings.retrievalApiKeySource) ? <button className="text-danger-button" type="button" disabled={busy || modelBusy} onClick={clearRetrievalKey}>清除检索密钥</button> : connectionTab === 'search' && ['session', 'device'].includes(settings.webSearchApiKeySource) ? <button className="text-danger-button" type="button" disabled={busy || modelBusy} onClick={clearWebSearchKey}>清除搜索密钥</button> : null}</div>
-            {(['chat', 'retrieval', 'search'] as const).includes(connectionTab as 'chat' | 'retrieval' | 'search') ? <button className="secondary-button" type="button" disabled={busy || modelBusy || (connectionTab === 'chat' ? !apiBaseUrl.trim() || !model.trim() || (!settings.hasApiKey && !apiKey.trim()) : connectionTab === 'retrieval' ? !retrievalApiBaseUrl.trim() || !embeddingModel.trim() || !hasUsableRetrievalKey : !settings.hasWebSearchApiKey && !webSearchApiKey.trim())} onClick={connectionTab === 'chat' ? testConnection : connectionTab === 'retrieval' ? testRetrievalConnection : testWebSearchConnection}>{busy ? '处理中…' : '保存并测试'}</button> : null}
-            <button className="primary-button" type="submit" disabled={busy || modelBusy || (connectionTab === 'chat' ? !apiBaseUrl.trim() || !model.trim() : connectionTab === 'vision' ? !visionModel.trim() : connectionTab === 'asr' ? !speechServiceBaseUrl.trim() || !speechRecognitionModel.trim() : connectionTab === 'tts' ? !speechServiceBaseUrl.trim() || !speechSynthesisModel.trim() || !speechVoice.trim() : connectionTab === 'retrieval' ? !retrievalApiBaseUrl.trim() || !embeddingModel.trim() || !rerankerModel.trim() : false)}>{busy ? '正在保存…' : '保存当前连接'}</button>
-          </div>
-        </div>
-        </div></div>
-      </section>}
-    </form>}
-  </div>;
 }
 
 function ProjectWorkspace(props: {
@@ -1946,7 +1421,7 @@ function NewProjectForm({ onCancel, onCreated }: { onCancel: () => void; onCreat
       <div className="form-heading"><div><h2 id="new-project-title">新建项目</h2><p>先填写名称和目标，文档可以稍后手动关联。</p></div><AppIconButton label="取消新建项目" onClick={onCancel}><X size={17} /></AppIconButton></div>
       <label><span>项目名称</span><input required value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：AI 秘书" /></label>
       <label><span>一句话目标</span><input value={summary} onChange={(event) => setSummary(event.target.value)} placeholder="这个项目要解决什么？" /></label>
-      {error ? <p className="form-error" role="alert">{error}</p> : null}
+      {error ? <FeedbackBanner tone="error">{error}</FeedbackBanner> : null}
       <div className="form-actions"><button className="secondary-button" type="button" onClick={onCancel}>取消</button><button className="primary-button" type="submit" disabled={busy}>{busy ? '正在创建…' : '创建项目'}</button></div>
     </form>
   );
@@ -2074,17 +1549,6 @@ function TasksTab(props: { tasks: Task[]; openTasks: Task[]; doneTasks: Task[]; 
           {props.editingTaskId === task.id ? <TaskEditForm task={task} documents={props.documents} onCancel={() => props.onEdit(null)} onSave={props.onUpdate} /> : null}
         </div>)}
       </div> : <InlineEmpty icon={<Check size={20} />} title={doneTasks.length ? '没有未完成任务' : '还没有项目任务'} detail={doneTasks.length ? '点击“展示已完成”查看已经完成的任务。' : '新建第一个任务，把项目下一步放进来。'} />}
-    </div>
-  );
-}
-
-function TaskRow({ task, onToggle, onEdit, readOnly = false }: { task: Task; onToggle?: () => void; onEdit?: () => void; readOnly?: boolean }) {
-  return (
-    <div className={`task-row ${task.status === 'done' ? 'done' : ''}`}>
-      <button className="task-check" type="button" disabled={readOnly} onClick={onToggle} aria-label={task.status === 'done' ? `重新打开任务：${task.title}` : `完成任务：${task.title}`}>{task.status === 'done' ? <Check size={15} /> : <Circle size={15} />}</button>
-      <div className="task-copy"><strong>{task.title}</strong><span>{statusLabel[task.status]}·{task.executor === 'ai' ? 'AI 秘书' : task.executor === 'self' ? '我自己' : '外部人员'}·{task.dueAt ? `${formatDate(task.dueAt)} 到期` : '未设截止时间'}{task.blockedReason ? ` · 阻塞：${task.blockedReason}` : ''}</span></div>
-      <span className={`priority priority-${task.priority}`}>{priorityLabel[task.priority]}</span>
-      {!readOnly ? <AppIconButton label={`编辑任务：${task.title}`} onClick={onEdit}><Pencil size={16} /></AppIconButton> : null}
     </div>
   );
 }
@@ -2257,7 +1721,7 @@ function ProjectDocumentReader({ document, onClose }: { document: DocumentRecord
     return () => { active = false; };
   }, [document.id, attempt]);
   return <RecordDialog title={loaded?.title ?? document.title} wide onClose={onClose}>
-    {error ? <div role="alert"><p>{error}</p><button className="secondary-button" onClick={() => setAttempt(value => value + 1)}>重新读取</button></div> : !loaded ? <p role="status"><LoaderCircle className="spin" size={18} />正在读取文档…</p> : <><p className="record-source">{loaded.relativePath}</p>{loaded.content?.trim() ? <MarkdownAnswer content={loaded.content} /> : <p>这篇文档暂时没有正文。</p>}</>}
+    {error ? <FeedbackBanner tone="error" action={<button className="secondary-button" onClick={() => setAttempt(value => value + 1)}>重新读取</button>}>{error}</FeedbackBanner> : !loaded ? <p role="status"><LoaderCircle className="spin" size={18} />正在读取文档…</p> : <><p className="record-source">{loaded.relativePath}</p>{loaded.content?.trim() ? <MarkdownAnswer content={loaded.content} /> : <p>这篇文档暂时没有正文。</p>}</>}
   </RecordDialog>;
 }
 
@@ -2273,7 +1737,7 @@ function QuickTaskEditor({ task, onClose, onSave }: { task: Task; onClose: () =>
     return () => { active = false; };
   }, [task.id, attempt]);
   return <RecordDialog title="编辑任务" busy={saving} onClose={onClose}>
-    {error ? <p className="form-error" role="alert">{error}</p> : null}
+    {error ? <FeedbackBanner tone="error">{error}</FeedbackBanner> : null}
     {!documents ? error ? <button className="secondary-button" onClick={() => setAttempt(value => value + 1)}>重新加载</button> : <p role="status">正在加载任务资料…</p> : <TaskEditForm task={task} documents={documents} onCancel={onClose} onSave={async (id, changes) => {
       setSaving(true); setError('');
       try { await onSave(id, changes); onClose(); }
@@ -2321,42 +1785,6 @@ function DocumentsTab({ projectId, documents, onRefresh, onNotice, onError }: { 
         </div>
       </dialog> : null}
     </div>
-  );
-}
-
-function ChatPanel(props: { open: boolean; scopeLabel: string; mode: Page; messages: ChatMessage[]; input: string; busy: boolean; conversationLoadBusy: boolean; responseMode: 'local-retrieval' | 'local-fallback' | 'openai'; conversationId: string | null; history: ConversationSummary[]; historyOpen: boolean; historyBusy: boolean; onInput: (value: string) => void; onSend: (event: React.FormEvent) => void; onStop: () => void; onSaveTaskSuggestion: (suggestion: TaskSuggestion, suggestionId: string | null | undefined, messageIndex: number) => void; onSaveTaskBatchSuggestion: (suggestion: TaskBatchSuggestion, suggestionId: string | null | undefined, messageIndex: number) => void; onNewConversation: () => void; onOpenHistory: () => void; onCloseHistory: () => void; onResumeConversation: (id: string) => void; onClose: () => void }) {
-  const streamRef = useRef<HTMLDivElement>(null);
-  const lastMessage = props.messages.at(-1);
-  useEffect(() => {
-    const stream = streamRef.current;
-    if (stream) stream.scrollTop = stream.scrollHeight;
-  }, [lastMessage?.content, lastMessage?.analysisSteps?.length, props.busy]);
-  return (
-    <aside className="chat-panel" aria-hidden={!props.open}>
-      <div className="chat-header"><div><h2>{props.historyOpen ? '对话历史' : props.mode === 'projects' ? '项目对话' : '记忆对话'}</h2><p>{props.scopeLabel}</p></div><div className="chat-header-actions"><AppIconButton label={props.historyOpen ? '返回当前对话' : '查看对话历史'} onClick={props.historyOpen ? props.onCloseHistory : props.onOpenHistory}><History size={17} /></AppIconButton><AppIconButton label="新建对话" onClick={props.onNewConversation}><Plus size={17} /></AppIconButton><AppIconButton label="关闭对话" onClick={props.onClose}><X size={18} /></AppIconButton></div></div>
-      {props.historyOpen ? <div className="conversation-history">
-        <div className="history-intro"><span>最近 30 段对话</span><button className="text-button" type="button" onClick={props.onNewConversation}>开始新对话</button></div>
-        {props.historyBusy ? <div className="history-loading"><LoaderCircle className="spin" size={17} />正在读取历史…</div> : props.history.length ? <div className="history-list">{props.history.map((conversation) => <button className={conversation.id === props.conversationId ? 'active' : ''} type="button" key={conversation.id} onClick={() => props.onResumeConversation(conversation.id)}><strong>{conversation.title}</strong><span>{conversation.preview || '这段对话还没有回答'}</span><time>{formatDateTime(conversation.updatedAt)} · {conversation.messageCount} 条消息</time></button>)}</div> : <div className="history-empty"><History size={22} /><strong>还没有对话历史</strong><p>第一次发送消息后，会自动保存在这里。</p></div>}
-      </div> : <>
-        <div className="scope-note"><Database size={15} /><span>{props.mode === 'projects' ? '只使用当前项目的文档、任务和记忆' : '可以跨项目回顾已确认记忆'}</span></div>
-        <div className="chat-stream" ref={streamRef} aria-live="polite" aria-busy={props.conversationLoadBusy}>
-          {props.conversationLoadBusy ? <div className="conversation-content-loading" role="status"><LoaderCircle className="spin" size={20} /><strong>正在打开对话…</strong><span>正在从服务器读取历史消息</span></div> : props.messages.length === 0 ? <div className="chat-empty"><MessageSquare size={23} /><h3>{props.mode === 'projects' ? '问一个项目问题' : '从历史中找经验'}</h3><p>{props.mode === 'projects' ? '例如：“这个项目接下来最该做什么？”' : '例如：“我过去最常遇到的项目问题是什么？”'}</p></div> : null}
-          {!props.conversationLoadBusy ? props.messages.map((message, index) => <div className={`chat-message ${message.role}`} key={message.createdAt ?? `${message.role}-${index}`}>
-            {message.role === 'assistant' ? <img className="assistant-avatar compact" src={xiaoEAvatar} width="32" height="32" alt="" aria-hidden="true" /> : null}
-            <div className="message-content">
-              {message.role === 'assistant' ? <span className="sr-only">小E：</span> : null}
-              {props.busy && index === props.messages.length - 1 && message.analysisSteps?.length ? <ChatAnalysis steps={message.analysisSteps} streaming /> : null}
-              {message.content ? message.role === 'assistant' ? <MarkdownAnswer content={message.content} /> : <div className="chat-answer plain-text">{message.content}</div> : null}
-              {message.taskSuggestion ? <TaskSuggestionCard suggestion={message.taskSuggestion} saved={Boolean(message.suggestionSaved)} onSave={(suggestion) => props.onSaveTaskSuggestion(suggestion, message.suggestionId, index)} /> : null}
-              {message.taskBatchSuggestion ? <TaskBatchSuggestionCard suggestion={message.taskBatchSuggestion} saved={Boolean(message.suggestionSaved)} onSave={(suggestion) => props.onSaveTaskBatchSuggestion(suggestion, message.suggestionId, index)} /> : null}
-              <ConversationCitations citations={message.citations} />
-            </div>
-          </div>) : null}
-        </div>
-        <form className="chat-composer" onSubmit={props.onSend}><textarea value={props.input} disabled={props.busy || props.conversationLoadBusy} onChange={(event) => props.onInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder={props.conversationLoadBusy ? '正在打开对话…' : props.busy ? 'AI 秘书正在回答…' : props.mode === 'projects' ? '询问项目、任务或文档…' : '询问过去的决定和经验…'} />{props.busy ? <button className="send-button stop" type="button" onClick={props.onStop} aria-label="停止回答"><X size={17} /></button> : <button className="send-button" type="submit" disabled={props.conversationLoadBusy || !props.input.trim()} aria-label="发送"><Send size={17} /></button>}</form>
-        <p className="chat-footnote">{props.responseMode === 'openai' ? '服务器检索 + 大模型回答' : props.responseMode === 'local-fallback' ? '模型暂不可用，已切回规则回答' : '服务器检索模式'} · 有用信息会自动进入记忆；任务和文档写入仍需确认</p>
-      </>}
-    </aside>
   );
 }
 

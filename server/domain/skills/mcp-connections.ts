@@ -1,3 +1,4 @@
+import { unknownToolOutcome } from './tool-outcome.js';
 import { randomUUID, randomBytes, createCipheriv, createDecipheriv, createHash } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -35,9 +36,10 @@ export function saveMcpConnection(input:Record<string,unknown>,id?:string){
 }
 export function setMcpEnabled(id:string,enabled:boolean){find(id);database.prepare('UPDATE mcp_connections SET enabled=? WHERE id=?').run(enabled?1:0,id);}
 export function deleteMcpConnection(id:string){find(id);database.prepare('DELETE FROM mcp_connections WHERE id=?').run(id);database.prepare("DELETE FROM app_settings WHERE key LIKE ? OR key LIKE ?").run(`tool_enabled:mcp_${id}_%`,`tool_policy:mcp_${id}_%`);}
-async function connected<T>(row:Connection,work:(client:Client,signal:AbortSignal)=>Promise<T>){
+async function connected<T>(row:Connection,work:(client:Client,signal:AbortSignal)=>Promise<T>,callerSignal?:AbortSignal){
+  callerSignal?.throwIfAborted();
   if(!row.enabled)throw fail('MCP 连接已停用。',403);
-  const signal=AbortSignal.timeout(20000),token=unseal(row.secret);
+  const signal=AbortSignal.any([AbortSignal.timeout(20000),...(callerSignal?[callerSignal]:[])]),token=unseal(row.secret);
   const headers:Record<string,string>=token?{Authorization:`Bearer ${token}`} : {};
   const origin=new URL(row.url).origin;
   const boundedFetch:typeof fetch=(input,init)=>{
@@ -48,7 +50,7 @@ async function connected<T>(row:Connection,work:(client:Client,signal:AbortSigna
   const transport=row.transport==='sse'?new SSEClientTransport(new URL(row.url),{requestInit:{headers},fetch:boundedFetch}):new StreamableHTTPClientTransport(new URL(row.url),{requestInit:{headers},fetch:boundedFetch,reconnectionOptions:{maxRetries:0,initialReconnectionDelay:1000,maxReconnectionDelay:1000,reconnectionDelayGrowFactor:1}});
   const client=new Client({name:'ai-secretary',version:'1.2.12'});
   try{await client.connect(transport,{signal,timeout:20000});return await work(client,signal);}
-  catch(error){if((error as {statusCode?:number}).statusCode)throw error;throw fail('MCP 请求失败或超时，请检查地址、协议、令牌及服务是否在线。',502);}
+  catch(error){if((error as {statusCode?:number}).statusCode)throw error;callerSignal?.throwIfAborted();throw fail('MCP 请求失败或超时，请检查地址、协议、令牌及服务是否在线。',502);}
   finally{await client.close().catch(()=>{});}
 }
 export async function discoverMcpTools(id:string){const row=find(id);return connected(row,async(client,signal)=>{
@@ -63,12 +65,20 @@ export async function discoverMcpTools(id:string){const row=find(id);return conn
   return {toolCount:tools.length};
 });}
 export function mcpToolDefinitions():SkillToolDefinition[]{return rows().filter(r=>r.enabled).flatMap(row=>(JSON.parse(row.tools_json) as RemoteTool[]).map(t=>({name:prefix(row)+t.name,description:`${row.name} · ${(t.description??t.name).slice(0,1000)}`,mode:'write' as const,permission:'mcp.execute',riskLevel:'medium' as const,parameters:JSON.stringify(t.inputSchema)})));}
-export async function callMcpTool(name:string,args:Record<string,unknown>){
+export async function callMcpTool(name:string,args:Record<string,unknown>,callerSignal?:AbortSignal){
+  callerSignal?.throwIfAborted();
   const row=rows().find(r=>name.startsWith(prefix(r)));if(!row||!row.enabled)throw fail('MCP 连接不可用或配置已变更。',403);
   const remoteName=name.slice(prefix(row).length);
   const tool=(JSON.parse(row.tools_json) as RemoteTool[]).find(t=>t.name===remoteName);
   if(!tool)throw fail('MCP 工具已变更，请刷新工具目录。',409);
   let valid=false;try{valid=new AjvJsonSchemaValidator().getValidator(tool.inputSchema)(args).valid;}catch{throw fail('MCP 参数定义无法验证，请联系服务提供者。');}
   if(!valid)throw fail('参数不符合该 MCP 工具的 JSON Schema，请检查必填项和类型。');
-  return connected(row,async(client,signal)=>{const result=await client.callTool({name:remoteName,arguments:args},undefined,{signal,timeout:20000});if(result.isError)throw fail('MCP 工具返回失败，请检查参数或服务端状态。',502);return result;});
+  return connected(row,async(client,signal)=>{
+    signal.throwIfAborted();
+    let result;
+    try { result=await client.callTool({name:remoteName,arguments:args},undefined,{signal,timeout:20000}); }
+    catch { throw unknownToolOutcome(); } // A dispatched call may already have changed the remote service.
+    if(result.isError)throw fail('MCP 工具返回失败，请检查参数或服务端状态。',502);
+    return result;
+  },callerSignal);
 }

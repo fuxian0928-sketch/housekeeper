@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { join } from 'node:path';
 import { database, nowIso } from '../db.js';
-import { lexicalSimilarity, syncMemorySearch } from '../domain/memories/memory-service.js';
+import { commitMemoryMutation,memoryRevision } from '../domain/memories/memory-ledger.js';
 
 type EntityType = 'project' | 'task' | 'memory' | 'conversation' | 'message' | 'profile';
 type SyncOperation = { id: string; deviceId: string; entityType: EntityType; entityId: string; operation: 'upsert'; payload: Record<string, unknown>; entityUpdatedAt: string; createdAt: string };
@@ -91,7 +91,7 @@ function applyOperation(operation: SyncOperation, vaultPath: string) {
   if (operation.entityType === 'memory' && localId === operation.entityId) {
     const projectId = payload.project_id ? alias(operation.deviceId, 'project', text(payload.project_id)) : null;
     const candidates = database.prepare(`SELECT id,content FROM memories WHERE COALESCE(project_id,'')=COALESCE(?,'') AND id<>? AND status NOT IN ('invalidated','rejected','superseded') ORDER BY updated_at DESC LIMIT 50`).all(projectId, localId) as Array<{ id: string; content: string }>;
-    const same = candidates.find((item) => normalize(item.content) === normalize(text(payload.content)) || lexicalSimilarity(item.content, text(payload.content)) >= .9);
+    const same = candidates.find((item) => normalize(item.content) === normalize(text(payload.content)));
     if (same) { localId = same.id; saveAlias(operation.deviceId, 'memory', operation.entityId, localId); }
   }
 
@@ -114,8 +114,16 @@ function applyOperation(operation: SyncOperation, vaultPath: string) {
     const projectId = payload.project_id ? alias(operation.deviceId, 'project', text(payload.project_id)) : null;
     if (projectId && !database.prepare('SELECT 1 FROM projects WHERE id=?').get(projectId)) throw new Error(`记忆所属项目尚未同步：${projectId}`);
     const existing = database.prepare('SELECT evidence_count,confidence,importance FROM memories WHERE id=?').get(localId) as { evidence_count: number; confidence: number; importance: number } | undefined;
+    const current=database.prepare('SELECT * FROM memories WHERE id=?').get(localId);
+    if(database.prepare('SELECT 1 FROM memory_forgetting WHERE memory_id=?').get(localId) ||
+      current&&database.prepare('SELECT 1 FROM memory_history WHERE memory_id=? LIMIT 1').get(localId)&&normalize(String(current.content))!==normalize(text(payload.content))&&payload.expectedRevision!==memoryRevision(current)){
+      recordConflict(operation,current,'memory_requires_current_revision');
+      database.prepare('INSERT INTO sync_applied_operations VALUES(?,?,?)').run(operation.id,operation.deviceId,nowIso());
+      return 'conflict';
+    }
+    commitMemoryMutation({ids:[localId],expected:current?new Map([[localId,memoryRevision(current)]]):undefined,kind:'legacy_sync_import'},()=>{
     database.prepare(`INSERT INTO memories(id,project_id,content,memory_type,status,source_label,scope_type,source_type,source_id,source_excerpt,valid_from,valid_until,confidence,salience,supersedes_id,contradicts_json,confirmed_at,invalidated_at,origin,reason,importance,last_verified_at,evidence_count,tags_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET project_id=excluded.project_id,content=excluded.content,memory_type=excluded.memory_type,status=excluded.status,source_label=excluded.source_label,scope_type=excluded.scope_type,source_type=excluded.source_type,source_id=excluded.source_id,source_excerpt=excluded.source_excerpt,valid_from=excluded.valid_from,valid_until=excluded.valid_until,confidence=MAX(memories.confidence,excluded.confidence),salience=MAX(memories.salience,excluded.salience),supersedes_id=excluded.supersedes_id,contradicts_json=excluded.contradicts_json,confirmed_at=excluded.confirmed_at,invalidated_at=excluded.invalidated_at,origin=excluded.origin,reason=excluded.reason,importance=MAX(memories.importance,excluded.importance),last_verified_at=excluded.last_verified_at,evidence_count=MAX(memories.evidence_count,excluded.evidence_count),tags_json=excluded.tags_json,updated_at=excluded.updated_at`).run(localId, projectId, text(payload.content).slice(0,1000), text(payload.memory_type,'other'), text(payload.status,'candidate'), text(payload.source_label).slice(0,300), text(payload.scope_type,projectId?'project':'global'), text(payload.source_type,'sync'), nullable(payload.source_id), nullable(payload.source_excerpt), nullable(payload.valid_from), nullable(payload.valid_until), Math.max(number(payload.confidence,1), existing?.confidence ?? 0), number(payload.salience,.5), nullable(payload.supersedes_id), text(payload.contradicts_json,'[]'), nullable(payload.confirmed_at), nullable(payload.invalidated_at), text(payload.origin,'manual'), text(payload.reason).slice(0,1000), Math.max(number(payload.importance,.5), existing?.importance ?? 0), nullable(payload.last_verified_at), Math.max(number(payload.evidence_count,1), existing?.evidence_count ?? 0), text(payload.tags_json,'[]'), text(payload.created_at,operation.createdAt), operation.entityUpdatedAt);
-    syncMemorySearch(localId);
+    });
   } else if (operation.entityType === 'conversation') {
     const projectId = payload.project_id ? alias(operation.deviceId, 'project', text(payload.project_id)) : null;
     if (projectId && !database.prepare('SELECT 1 FROM projects WHERE id=?').get(projectId)) throw new Error(`对话所属项目尚未同步：${projectId}`);

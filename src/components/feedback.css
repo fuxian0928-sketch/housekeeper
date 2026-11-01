@@ -1,0 +1,59 @@
+/* Compact, content-sized feedback shared by floating and in-panel notices. */
+.refined-shell .feedback-stack {
+  position:fixed;
+  z-index:220;
+  top:calc(76px + env(safe-area-inset-top, 0px));
+  inset-inline:16px;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:8px;
+  pointer-events:none;
+}
+.refined-shell .feedback-banner {
+  --feedback-surface:var(--accent-soft);
+  --feedback-ink:var(--accent-dark);
+  --feedback-border:color-mix(in srgb, var(--accent) 24%, var(--line));
+  position:relative;
+  display:flex;
+  align-items:center;
+  flex:none;
+  justify-self:center;
+  align-self:center;
+  grid-column:1 / -1;
+  gap:9px;
+  box-sizing:border-box;
+  width:fit-content;
+  min-width:0;
+  max-width:min(720px, 100%);
+  min-height:40px;
+  margin:12px auto;
+  padding:10px 13px;
+  border:1px solid var(--feedback-border);
+  border-radius:10px;
+  background:var(--feedback-surface);
+  color:var(--feedback-ink);
+  box-shadow:0 8px 22px -16px rgb(var(--refined-shadow) / 30%);
+  font-size:12px;
+  font-weight:400;
+  line-height:1.6;
+  text-align:left;
+}
+.refined-shell .feedback-banner[data-tone=success] {--feedback-surface:var(--success-soft);--feedback-ink:var(--success);--feedback-border:color-mix(in srgb, var(--success) 24%, var(--line));}
+.refined-shell .feedback-banner[data-tone=warning] {--feedback-surface:var(--warning-soft);--feedback-ink:var(--warning);--feedback-border:color-mix(in srgb, var(--warning) 24%, var(--line));}
+.refined-shell .feedback-banner[data-tone=error] {--feedback-surface:var(--danger-soft);--feedback-ink:var(--danger);--feedback-border:color-mix(in srgb, var(--danger) 24%, var(--line));}
+.refined-shell .feedback-banner-icon {flex:0 0 auto;stroke-width:1.75;}
+.refined-shell .feedback-banner-copy {min-width:0;overflow-wrap:anywhere;white-space:pre-wrap;}
+.refined-shell .feedback-banner-action {display:flex;flex:0 0 auto;align-items:center;gap:6px;}
+.refined-shell .feedback-banner :is(.text-button,.secondary-button) {min-height:26px;padding:3px 7px;border-color:var(--feedback-border);background:transparent;color:inherit;font-size:11px;white-space:nowrap;}
+.refined-shell .feedback-banner :is(.text-button,.secondary-button):hover {background:color-mix(in srgb, currentColor 7%, transparent);}
+.refined-shell .feedback-banner-close {display:grid;flex:0 0 auto;place-items:center;width:26px;height:26px;min-height:26px;margin:-3px -5px -3px 0;padding:0;border:0;border-radius:6px;background:transparent;color:inherit;cursor:pointer;}
+.refined-shell .feedback-banner-close:hover {background:color-mix(in srgb, currentColor 9%, transparent);}
+.refined-shell .feedback-banner :is(button,a):focus-visible {outline-color:currentColor;outline-offset:2px;}
+.refined-shell .feedback-stack>.feedback-banner {margin:0;pointer-events:auto;animation:feedback-arrive 180ms cubic-bezier(.22,.8,.25,1) both;}
+@keyframes feedback-arrive {from {opacity:0;transform:translateY(-6px);}to {opacity:1;transform:translateY(0);}}
+@media(max-width:700px) {
+  .refined-shell .feedback-stack {inset-inline:12px;top:calc(68px + env(safe-area-inset-top, 0px));}
+  .refined-shell .feedback-banner {gap:8px;padding:9px 11px;}
+}
+@media(prefers-reduced-motion:reduce) {.refined-shell .feedback-stack>.feedback-banner {animation:none;}}
