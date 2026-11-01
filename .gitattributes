@@ -4,6 +4,7 @@
 *.ico binary
 *.wav binary
 *.cmd text eol=crlf
+LICENSE -text -whitespace
 
 # Preserve upstream notice bytes used by the runtime integrity manifest.
 scripts/voice-lab/notices/*-LICENSE.txt -text
